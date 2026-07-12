@@ -511,19 +511,18 @@ def configure_macos_app():
 def export_image(data):
     from PIL import Image, ImageDraw
 
-    W, H = 1200, 1400
-    BG = "#101114"
-    PANEL = "#181a20"
-    PANEL_2 = "#20232b"
-    LINE = "#2d313a"
-    TEXT = "#f8fafc"
-    MUTED = "#9ca3af"
-    GREEN = "#20c997"
-    RED = "#ff5c7a"
-    GOLD = "#f2b84b"
-    CYAN = "#4cc9f0"
+    W, H = 1200, 1500
+    PAPER = "#F4F6F2"
+    INK = "#173027"
+    MUTED = "#65726C"
+    LINE = "#C9D1CB"
+    SOFT = "#E5EAE4"
+    GREEN = "#07805F"
+    RED = "#CE5B4E"
+    GOLD = "#D5A530"
+    BLUE = "#3278B6"
 
-    img = Image.new("RGB", (W, H), BG)
+    img = Image.new("RGB", (W, H), PAPER)
     draw = ImageDraw.Draw(img)
 
     def text_right(x, y, text, font_obj, fill):
@@ -537,18 +536,6 @@ def export_image(data):
             font_obj = font(current, bold=bold)
         draw.text((x, y), text, fill=fill, font=font_obj)
 
-    def card(x1, y1, x2, y2, fill=PANEL):
-        draw.rounded_rectangle((x1, y1, x2, y2), radius=24, fill=fill)
-
-    def metric_card(x, y, w, label, value, color):
-        card(x, y, x + w, y + 150, PANEL_2)
-        draw.rounded_rectangle((x + 26, y + 26, x + 34, y + 74), radius=4, fill=color)
-        draw.text((x + 52, y + 26), label.upper(), fill=MUTED, font=font(20))
-        fit_text(x + 52, y + 68, value, w - 80, 46, TEXT, bold=True)
-
-    for i in range(0, W, 46):
-        draw.line((i, 0, i - 240, H), fill="#14161a", width=1)
-
     net = net_profit(data)
     rev = revenue_total(data)
     exp = expense_total(data)
@@ -557,81 +544,99 @@ def export_image(data):
     rate = savings_rate(data)
     pct = goal_progress(net, data)
     pace = pace_status(data)
-    pace_color = GREEN if pace["delta"] >= 0 else RED
     goal = goal_amount(data)
     remaining = max(goal - net, 0)
-    quote = QUOTES[date.today().day % len(QUOTES)]
+    cats = list(expense_by_category(data).items())[:3]
 
-    pad = 64
-    draw.text((pad, 70), "HUSTLER", fill=TEXT, font=font(34, bold=True))
-    text_right(W - pad, 76, date.today().strftime("%b %d, %Y"), font(22), MUTED)
-    draw.text((pad, 112), quote, fill=MUTED, font=font(23))
+    pad = 72
+    content_right = W - pad
+    draw.rectangle((0, 0, 20, H), fill=GREEN)
+    draw.text((pad, 58), "HUSTLER", fill=INK, font=font(54, bold=True))
+    draw.text((pad, 126), "PERSONAL FINANCIAL SNAPSHOT", fill=MUTED, font=font(20, bold=True))
+    text_right(content_right, 72, date.today().strftime("%d %b %Y").upper(), font(22, bold=True), INK)
+    draw.line((pad, 172, content_right, 172), fill=INK, width=3)
 
-    card(pad, 180, W - pad, 500)
-    draw.text((pad + 46, 230), "NET PROFIT", fill=MUTED, font=font(22))
-    fit_text(pad + 46, 270, fmt(net, data), 610, 96, TEXT, bold=True)
-    draw.text((pad + 50, 390), f"{fmt(remaining, data)} left to hit {fmt(goal, data)}", fill=MUTED, font=font(28))
+    draw.text((pad, 222), "NET PROFIT", fill=MUTED, font=font(22, bold=True))
+    fit_text(pad, 260, fmt(net, data), 650, 112, INK, bold=True)
+    draw.text((pad, 393), f"{fmt(remaining, data)} remaining of {fmt(goal, data)} goal", fill=MUTED, font=font(27))
 
-    cx, cy, r = W - pad - 170, 338, 112
-    draw.arc((cx - r, cy - r, cx + r, cy + r), 0, 360, fill=LINE, width=28)
-    draw.arc((cx - r, cy - r, cx + r, cy + r), -90, -90 + int(360 * pct), fill=GREEN if pct >= 1 else GOLD, width=28)
+    cx, cy, r = 944, 327, 126
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=LINE, width=22)
+    draw.arc((cx - r, cy - r, cx + r, cy + r), -90, -90 + int(360 * pct), fill=GREEN if pct >= 1 else GOLD, width=22)
     pct_text = f"{int(pct * 100)}%"
-    pct_font = font(46, bold=True)
-    draw.text((cx - draw.textlength(pct_text, font=pct_font) / 2, cy - 30), pct_text, fill=TEXT, font=pct_font)
-    complete_text = "complete"
-    complete_font = font(18)
-    draw.text((cx - draw.textlength(complete_text, font=complete_font) / 2, cy + 28), complete_text, fill=MUTED, font=complete_font)
+    pct_font = font(54, bold=True)
+    draw.text((cx - draw.textlength(pct_text, font=pct_font) / 2, cy - 42), pct_text, fill=INK, font=pct_font)
+    stamp_label = "OF GOAL"
+    stamp_font = font(17, bold=True)
+    draw.text((cx - draw.textlength(stamp_label, font=stamp_font) / 2, cy + 30), stamp_label, fill=MUTED, font=stamp_font)
 
-    y = 540
-    gap = 22
-    w = (W - pad * 2 - gap * 2) // 3
-    metric_card(pad, y, w, "Revenue", fmt(rev, data), GREEN)
-    metric_card(pad + w + gap, y, w, "Expenses", fmt(exp, data), RED)
-    metric_card(pad + (w + gap) * 2, y, w, "Savings", f"{rate:.0f}%", CYAN)
+    track_y = 485
+    draw.text((pad, 446), "GOAL PROGRESS", fill=MUTED, font=font(19, bold=True))
+    draw.rectangle((pad, track_y, content_right, track_y + 22), fill=SOFT)
+    filled_x = pad + int((content_right - pad) * pct)
+    if filled_x > pad:
+        draw.rectangle((pad, track_y, filled_x, track_y + 22), fill=GREEN)
+    text_right(content_right, 446, f"{fmt(net, data)} / {fmt(goal, data)}", font(19, bold=True), INK)
 
-    y = 730
-    card(pad, y, W - pad, y + 230)
-    draw.text((pad + 34, y + 32), "GOAL PACE", fill=MUTED, font=font(22))
-    draw.text((pad + 34, y + 72), pace["label"], fill=pace_color, font=font(50, bold=True))
-    draw.text((pad + 34, y + 142), f"{fmt(abs(pace['delta']), data)} vs plan", fill=TEXT, font=font(28))
-    text_right(W - pad - 34, y + 70, f"{fmt(pace['needed_daily'], data)}/day", font(42, bold=True), TEXT)
-    text_right(W - pad - 34, y + 126, "needed from here", font(22), MUTED)
-    draw.line((pad + 34, y + 184, W - pad - 34, y + 184), fill=LINE, width=2)
-    draw.text((pad + 34, y + 196), f"Average: {fmt(pace['avg_daily'], data)}/day", fill=MUTED, font=font(22))
-    text_right(W - pad - 34, y + 196, f"{pace['elapsed_days']} of {pace['total_days']} days", font(22), MUTED)
+    metric_y = 580
+    column_width = (content_right - pad) / 3
+    metrics = [
+        ("REVENUE", fmt(rev, data), GREEN),
+        ("EXPENSES", fmt(exp, data), RED),
+        ("SAVINGS RATE", f"{rate:.0f}%", BLUE),
+    ]
+    for index, (label, value, color) in enumerate(metrics):
+        x = pad + int(index * column_width)
+        if index:
+            draw.line((x - 30, metric_y, x - 30, metric_y + 132), fill=LINE, width=2)
+        draw.rectangle((x, metric_y, x + 8, metric_y + 38), fill=color)
+        draw.text((x + 24, metric_y - 2), label, fill=MUTED, font=font(18, bold=True))
+        fit_text(x, metric_y + 52, value, int(column_width - 30), 49, INK, bold=True)
 
-    y = 1000
-    card(pad, y, W - pad, y + 250)
-    draw.text((pad + 34, y + 30), "MOMENTUM", fill=MUTED, font=font(22))
+    pace_y = 790
+    draw.line((pad, pace_y, content_right, pace_y), fill=INK, width=3)
+    draw.text((pad, pace_y + 34), "PACE", fill=MUTED, font=font(19, bold=True))
+    pace_label = "AHEAD OF PLAN" if pace["delta"] >= 0 else "BEHIND PLAN"
+    draw.text((pad, pace_y + 72), pace_label, fill=GREEN if pace["delta"] >= 0 else RED, font=font(45, bold=True))
+    draw.text((pad, pace_y + 132), f"{fmt(abs(pace['delta']), data)} from planned progress", fill=INK, font=font(27))
+    right_x = 760
+    draw.text((right_x, pace_y + 34), "FROM HERE", fill=MUTED, font=font(19, bold=True))
+    fit_text(right_x, pace_y + 70, f"{fmt(pace['needed_daily'], data)}/day", content_right - right_x, 44, INK, bold=True)
+    draw.text((right_x, pace_y + 132), f"Day {pace['elapsed_days']} of {pace['total_days']}", fill=MUTED, font=font(24))
+
+    flow_y = 1045
+    draw.line((pad, flow_y, content_right, flow_y), fill=INK, width=3)
+    draw.text((pad, flow_y + 34), "CASH FLOW", fill=MUTED, font=font(19, bold=True))
     rows = [
-        ("Today", f"+{currency(data)}{today_revenue(data):,.2f}   -{currency(data)}{today_expenses(data):,.2f}", GREEN),
-        ("This week", fmt(week_revenue(data), data), GOLD),
-        ("This month", fmt(month_revenue(data), data), CYAN),
-        ("Streak", f"{s} day{'s' if s != 1 else ''}  |  best {bs}", RED if s == 0 else GREEN),
+        ("TODAY", f"+{currency(data)}{today_revenue(data):,.2f}    -{currency(data)}{today_expenses(data):,.2f}", GREEN),
+        ("THIS WEEK", fmt(week_revenue(data), data), GOLD),
+        ("THIS MONTH", fmt(month_revenue(data), data), BLUE),
+        ("ACTIVE STREAK", f"{s} day{'s' if s != 1 else ''}  /  best {bs}", GREEN if s else RED),
     ]
     for i, (label, value, color) in enumerate(rows):
-        ry = y + 78 + i * 42
-        draw.rounded_rectangle((pad + 34, ry + 5, pad + 46, ry + 17), radius=6, fill=color)
-        draw.text((pad + 62, ry), label, fill=MUTED, font=font(24))
-        text_right(W - pad - 34, ry, value, font(24, bold=True), TEXT)
+        ry = flow_y + 82 + i * 54
+        draw.rectangle((pad, ry + 7, pad + 12, ry + 26), fill=color)
+        draw.text((pad + 30, ry), label, fill=MUTED, font=font(22, bold=True))
+        text_right(content_right, ry, value, font(25, bold=True), INK)
 
-    cats = list(expense_by_category(data).items())[:4]
-    y = 1286
+    spend_y = 1320
+    draw.line((pad, spend_y, content_right, spend_y), fill=LINE, width=2)
+    draw.text((pad, spend_y + 28), "TOP SPENDING", fill=MUTED, font=font(18, bold=True))
     if cats:
-        draw.text((pad, y), "Top spending", fill=MUTED, font=font(18))
-        x = pad + 140
+        x = pad
         max_spend = max(total for _, total in cats) or 1
         for cat, total in cats:
-            bar_w = int(170 * total / max_spend)
-            draw.rounded_rectangle((x, y + 6, x + 170, y + 18), radius=6, fill=LINE)
-            draw.rounded_rectangle((x, y + 6, x + bar_w, y + 18), radius=6, fill=RED)
-            draw.text((x, y + 28), cat[:12], fill=MUTED, font=font(15))
-            x += 205
+            width = 310
+            bar_width = int(width * total / max_spend)
+            draw.text((x, spend_y + 64), cat[:18].upper(), fill=INK, font=font(17, bold=True))
+            draw.rectangle((x, spend_y + 94, x + width, spend_y + 108), fill=SOFT)
+            draw.rectangle((x, spend_y + 94, x + bar_width, spend_y + 108), fill=RED)
+            draw.text((x, spend_y + 120), fmt(total, data), fill=MUTED, font=font(18, bold=True))
+            x += 350
     else:
-        draw.text((pad, y), "No expenses logged yet", fill=MUTED, font=font(18))
+        draw.text((pad, spend_y + 66), "No expenses logged yet", fill=MUTED, font=font(20))
 
-    draw.text((pad, H - 58), "Built from local Hustler data", fill=LINE, font=font(18))
-    text_right(W - pad, H - 58, "hustler", font(18, bold=True), LINE)
+    text_right(content_right, H - 34, "LOCAL DATA / HUSTLER", font(17, bold=True), MUTED)
 
     os.makedirs(EXPORT_DIR, exist_ok=True)
     path = os.path.join(EXPORT_DIR, "hustler_progress.png")
