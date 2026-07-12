@@ -1150,32 +1150,32 @@ class Hustler(rumps.App):
         projection = forecast(self.data)
         budgets = budget_statuses(self.data)
 
-        self.menu.add(rumps.MenuItem(f"Hustler  |  {active_goal(self.data)['name']}"))
+        self.menu.add(rumps.MenuItem(f"🎯 Hustler  |  {active_goal(self.data)['name']}"))
         self.menu.add(rumps.separator)
 
         symbol = currency(self.data)
-        self.menu.add(rumps.MenuItem(f"Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"This Week: {symbol}{wk:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"This Month: {symbol}{mo:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"💵 Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"📅 This Week: {symbol}{wk:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"📆 This Month: {symbol}{mo:,.2f}"))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem(f"Progress:  {bar} {pct}"))
-        self.menu.add(rumps.MenuItem(f"Daily Target: {symbol}{target:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"Pace: {pace['label']} by {fmt(abs(pace['delta']), self.data)}  •  Avg {fmt(pace['avg_daily'], self.data)}/day"))
+        self.menu.add(rumps.MenuItem(f"🎯 Daily Target: {symbol}{target:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']} by {fmt(abs(pace['delta']), self.data)}  •  Avg {fmt(pace['avg_daily'], self.data)}/day"))
         if projection["date"]:
-            self.menu.add(rumps.MenuItem(f"Forecast: {projection['date']:%b %d, %Y}"))
-        self.menu.add(rumps.MenuItem(f"Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
-        self.menu.add(rumps.MenuItem(f"Savings Rate: {rate:.0f}%"))
+            self.menu.add(rumps.MenuItem(f"🔮 Forecast: {projection['date']:%b %d, %Y}"))
+        self.menu.add(rumps.MenuItem(f"🔥 Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
+        self.menu.add(rumps.MenuItem(f"💰 Savings Rate: {rate:.0f}%"))
         if budgets and budgets[0]["ratio"] >= 0.8:
             budget = budgets[0]
-            self.menu.add(rumps.MenuItem(f"Budget: {budget['category']} at {int(budget['ratio'] * 100)}%"))
+            self.menu.add(rumps.MenuItem(f"⚠️ Budget: {budget['category']} at {int(budget['ratio'] * 100)}%"))
         self.menu.add(rumps.separator)
 
-        quick_add = rumps.MenuItem("Quick Add")
+        quick_add = rumps.MenuItem("⚡ Quick Add")
         for amount in [25, 50, 100, 250, 500]:
             quick_add.add(rumps.MenuItem(f"+{symbol}{amount}", callback=self._quick_add))
         self.menu.add(quick_add)
-        self.menu.add(rumps.MenuItem("Quick Log", callback=self._quick_log))
+        self.menu.add(rumps.MenuItem("✍️ Quick Log", callback=self._quick_log))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("➕ Add Revenue", callback=self.add_revenue))
@@ -1184,7 +1184,7 @@ class Hustler(rumps.App):
 
         earned = self.data.get("achievements", [])
         if earned:
-            self.menu.add(rumps.MenuItem("Achievements"))
+            self.menu.add(rumps.MenuItem("🏅 Achievements"))
             for key in earned:
                 if key in ACHIEVEMENTS:
                     ach = ACHIEVEMENTS[key]
@@ -1194,40 +1194,40 @@ class Hustler(rumps.App):
         reached = self.data.get("milestones", [])
         if reached:
             labels = {0.25: "25%", 0.50: "50%", 0.75: "75%", 1.0: "100%"}
-            self.menu.add(rumps.MenuItem("Milestones"))
+            self.menu.add(rumps.MenuItem("🏁 Milestones"))
             for m in sorted(reached):
                 self.menu.add(rumps.MenuItem(f"  {labels.get(m, f'{int(m*100)}%')}"))
             self.menu.add(rumps.separator)
 
         if cats:
-            self.menu.add(rumps.MenuItem("Spending Breakdown"))
+            self.menu.add(rumps.MenuItem("📊 Spending Breakdown"))
             for cat, total in list(cats.items())[:5]:
                 self.menu.add(rumps.MenuItem(f"  {cat}: {symbol}{total:,.2f}"))
             self.menu.add(rumps.separator)
 
         recent = recent_entries(self.data, limit=4)
         if recent:
-            self.menu.add(rumps.MenuItem("Recent Activity"))
+            self.menu.add(rumps.MenuItem("🧾 Recent Activity"))
             for _, entry_type, _, entry in recent:
                 self.menu.add(rumps.MenuItem(f"  {entry_summary(entry_type, entry, self.data)}"))
             self.menu.add(rumps.separator)
 
-        tools_menu = rumps.MenuItem("Tools")
-        tools_menu.add(rumps.MenuItem("Monthly Review", callback=self._monthly_review))
-        tools_menu.add(rumps.MenuItem("Import CSV", callback=self._import_csv))
-        tools_menu.add(rumps.MenuItem("Export CSV", callback=self._export_csv))
-        tools_menu.add(rumps.MenuItem("Export Image", callback=self._export_image))
+        tools_menu = rumps.MenuItem("🛠 Tools")
+        tools_menu.add(rumps.MenuItem("📋 Monthly Review", callback=self._monthly_review))
+        tools_menu.add(rumps.MenuItem("📥 Import CSV", callback=self._import_csv))
+        tools_menu.add(rumps.MenuItem("📤 Export CSV", callback=self._export_csv))
+        tools_menu.add(rumps.MenuItem("🖼 Export Image", callback=self._export_image))
         self.menu.add(tools_menu)
 
-        settings_menu = rumps.MenuItem("Settings")
-        settings_menu.add(rumps.MenuItem("Edit Active Goal", callback=self._edit_goal_settings))
-        settings_menu.add(rumps.MenuItem("Add Goal", callback=self._add_goal))
-        settings_menu.add(rumps.MenuItem("Switch Goal", callback=self._switch_goal))
-        settings_menu.add(rumps.MenuItem("Set Category Budget", callback=self._set_budget))
-        settings_menu.add(rumps.MenuItem("Add Monthly Recurring", callback=self._add_recurring))
+        settings_menu = rumps.MenuItem("⚙️ Settings")
+        settings_menu.add(rumps.MenuItem("🎯 Edit Active Goal", callback=self._edit_goal_settings))
+        settings_menu.add(rumps.MenuItem("➕ Add Goal", callback=self._add_goal))
+        settings_menu.add(rumps.MenuItem("🔄 Switch Goal", callback=self._switch_goal))
+        settings_menu.add(rumps.MenuItem("💳 Set Category Budget", callback=self._set_budget))
+        settings_menu.add(rumps.MenuItem("🔁 Add Monthly Recurring", callback=self._add_recurring))
         self.menu.add(settings_menu)
-        self.menu.add(rumps.MenuItem("Undo Last Entry", callback=self._undo_last_entry))
-        self.menu.add(rumps.MenuItem("Reset Month", callback=self._reset_month))
+        self.menu.add(rumps.MenuItem("↩️ Undo Last Entry", callback=self._undo_last_entry))
+        self.menu.add(rumps.MenuItem("🔄 Reset Month", callback=self._reset_month))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("Quit", callback=self.quit_app))
