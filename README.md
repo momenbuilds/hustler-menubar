@@ -6,6 +6,12 @@ Hustler Menu is a lightweight, local-first macOS menu bar app for tracking a fin
 
 It has no account, server, analytics, subscription, or cloud sync.
 
+## Download For Mac
+
+Download the latest `Hustler-macOS.zip` from [Releases](https://github.com/momenbuilds/hustler-menubar/releases/latest), unzip it, and drag `Hustler.app` into Applications.
+
+On the first launch, macOS may ask for confirmation because the app is not distributed through the App Store. Control-click `Hustler.app`, choose `Open`, then confirm once.
+
 ## What You Can Do
 
 - Set a money goal during first launch, without editing Python code.
@@ -15,7 +21,9 @@ It has no account, server, analytics, subscription, or cloud sync.
 - Add recurring monthly income or expenses.
 - Set monthly category budgets and get an alert when a budget is nearly used.
 - Keep multiple goals and switch the active goal whenever you need to.
+- Keep entries separate for each goal.
 - Import a CSV file and review the current month in the app.
+- Copy a share-ready weekly recap in one click.
 - Undo the latest revenue or expense entry.
 - Export your entries as CSV and a shareable progress image.
 - Change the goal amount, currency, and dates whenever you need to.
@@ -67,15 +75,16 @@ Click the menu bar item to open Hustler.
 - `Add Revenue`: record a custom revenue entry.
 - `Add Expense`: record an expense and category.
 - `Undo Last Entry`: remove the newest revenue or expense entry.
+- `Manage Entries`: edit or delete a recent entry.
 - `Export CSV`: writes `hustler_export.csv` to Downloads.
 - `Export Image`: writes `hustler_progress.png` to Downloads.
 - `Reset Month`: clears revenue and expenses, but retains achievements and goal settings.
 
 ## Goals, Budgets, And Tools
 
-Open `Settings` to edit the active goal, add another goal, switch goals, set a category budget, or add a monthly recurring entry. Recurring entries are added when Hustler next opens, so they do not require a background process.
+Open `Settings` to edit the active goal, add another goal, switch goals, set a category budget, or add and remove monthly recurring entries. Each goal has its own entries and progress. Recurring entries are added when Hustler next opens, so they do not require a background process.
 
-Open `Tools` for a monthly review, CSV import, and exports. Hustler imports its own CSV exports and common CSV files with `Amount`, `Date`, and optional `Description`, `Type`, and `Category` columns.
+Open `Tools` for monthly review, a copied weekly recap, CSV import, and exports. CSV import uses the normal macOS file picker and supports Hustler exports plus common CSV files with `Amount`, `Date`, and optional `Description`, `Type`, and `Category` columns.
 
 ## Local Data And Privacy
 

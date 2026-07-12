@@ -9,6 +9,9 @@ hustler_export.csv
 # Local macOS build/test artifacts
 Hustler.app/
 Hustler.iconset/
+build/
+dist/
+.build-venv/
 
 # macOS metadata
 .DS_Store

@@ -4,6 +4,7 @@ import json
 import os
 import csv
 import math
+import sys
 from datetime import datetime, date, timedelta
 
 DEFAULT_GOAL = 5000
@@ -12,8 +13,11 @@ DEFAULT_GOAL_DAYS = 30
 QUOTE_ROTATION_SECONDS = 300
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.environ.get("HUSTLER_DATA_FILE", os.path.join(SCRIPT_DIR, "hustler_data.json"))
-ASSET_DIR = os.path.join(SCRIPT_DIR, "assets")
+IS_BUNDLED = getattr(sys, "frozen", False)
+APP_DATA_DIR = os.path.expanduser("~/Library/Application Support/Hustler") if IS_BUNDLED else SCRIPT_DIR
+DATA_FILE = os.environ.get("HUSTLER_DATA_FILE", os.path.join(APP_DATA_DIR, "hustler_data.json"))
+ASSET_ROOT = getattr(sys, "_MEIPASS", SCRIPT_DIR) if IS_BUNDLED else SCRIPT_DIR
+ASSET_DIR = os.path.join(ASSET_ROOT, "assets")
 MENU_BAR_ICON_FILE = os.path.join(ASSET_DIR, "hustler_menubar_icon.png")
 APP_ICON_FILE = os.path.join(ASSET_DIR, "hustler_app_icon.png")
 EXPORT_DIR = os.environ.get("HUSTLER_EXPORT_DIR", os.path.expanduser("~/Downloads"))
@@ -197,6 +201,10 @@ def load_data():
             if key not in {"goals", "active_goal_id"}:
                 settings.setdefault(key, value)
         normalize_goal_settings(settings)
+        active_id = settings["active_goal_id"]
+        for entry_type in ("revenue", "expenses"):
+            for entry in data.get(entry_type, []):
+                entry.setdefault("goal_id", active_id)
         return data
 
     save_data(default)
@@ -310,35 +318,40 @@ def font(size, bold=False):
 
 
 def revenue_total(data):
-    return sum(e["amount"] for e in data.get("revenue", []))
+    return sum(e["amount"] for e in active_entries(data, "revenue"))
 
 
 def expense_total(data):
-    return sum(e["amount"] for e in data.get("expenses", []))
+    return sum(e["amount"] for e in active_entries(data, "expenses"))
 
 
 def net_profit(data):
     return revenue_total(data) - expense_total(data)
 
 
+def active_entries(data, entry_type):
+    goal_id = active_goal(data)["id"]
+    return [entry for entry in data.get(entry_type, []) if entry.get("goal_id", goal_id) == goal_id]
+
+
 def today_revenue(data):
     today = date.today().isoformat()
-    return sum(e["amount"] for e in data.get("revenue", []) if e["timestamp"].startswith(today))
+    return sum(e["amount"] for e in active_entries(data, "revenue") if e["timestamp"].startswith(today))
 
 
 def today_expenses(data):
     today = date.today().isoformat()
-    return sum(e["amount"] for e in data.get("expenses", []) if e["timestamp"].startswith(today))
+    return sum(e["amount"] for e in active_entries(data, "expenses") if e["timestamp"].startswith(today))
 
 
 def week_revenue(data):
     week_ago = (date.today() - timedelta(days=7)).isoformat()
-    return sum(e["amount"] for e in data.get("revenue", []) if e["timestamp"][:10] >= week_ago)
+    return sum(e["amount"] for e in active_entries(data, "revenue") if e["timestamp"][:10] >= week_ago)
 
 
 def month_revenue(data):
     month_start = date.today().replace(day=1).isoformat()
-    return sum(e["amount"] for e in data.get("revenue", []) if e["timestamp"][:10] >= month_start)
+    return sum(e["amount"] for e in active_entries(data, "revenue") if e["timestamp"][:10] >= month_start)
 
 
 def days_left(data):
@@ -400,7 +413,7 @@ def forecast(data):
 def month_expenses_by_category(data):
     month_start = date.today().replace(day=1).isoformat()
     totals = {}
-    for entry in data.get("expenses", []):
+    for entry in active_entries(data, "expenses"):
         if entry.get("timestamp", "")[:10] < month_start:
             continue
         category = entry.get("category", "Other")
@@ -444,6 +457,7 @@ def apply_due_recurring(data, today=None):
                 "amount": float(item["amount"]),
                 "description": item.get("description", "Recurring entry"),
                 "timestamp": f"{due.isoformat()}T09:00:00",
+                "goal_id": item.get("goal_id", active_goal(data)["id"]),
             }
             if entry_type == "expenses":
                 entry["category"] = item.get("category", "Other")
@@ -504,6 +518,7 @@ def import_csv_entries(data, path):
                 "amount": abs(amount),
                 "description": normalized.get("description") or normalized.get("memo") or "Imported entry",
                 "timestamp": timestamp,
+                "goal_id": active_goal(data)["id"],
             }
             if entry_type == "expenses":
                 entry["category"] = normalized.get("category") or "Other"
@@ -514,8 +529,8 @@ def import_csv_entries(data, path):
 
 def monthly_review(data):
     month_start = date.today().replace(day=1).isoformat()
-    revenue = sum(entry["amount"] for entry in data.get("revenue", []) if entry.get("timestamp", "")[:10] >= month_start)
-    expenses = sum(entry["amount"] for entry in data.get("expenses", []) if entry.get("timestamp", "")[:10] >= month_start)
+    revenue = sum(entry["amount"] for entry in active_entries(data, "revenue") if entry.get("timestamp", "")[:10] >= month_start)
+    expenses = sum(entry["amount"] for entry in active_entries(data, "expenses") if entry.get("timestamp", "")[:10] >= month_start)
     categories = month_expenses_by_category(data)
     largest = max(categories, key=categories.get) if categories else "None"
     return "\n".join(
@@ -529,13 +544,59 @@ def monthly_review(data):
     )
 
 
+def weekly_recap(data):
+    week_start = date.today() - timedelta(days=6)
+    revenue = sum(
+        entry["amount"]
+        for entry in active_entries(data, "revenue")
+        if entry.get("timestamp", "")[:10] >= week_start.isoformat()
+    )
+    expenses = sum(
+        entry["amount"]
+        for entry in active_entries(data, "expenses")
+        if entry.get("timestamp", "")[:10] >= week_start.isoformat()
+    )
+    return (
+        f"Hustler weekly recap\n"
+        f"{active_goal(data)['name']}: {pct_label(net_profit(data), data)} complete\n"
+        f"Income: {fmt(revenue, data)} | Spending: {fmt(expenses, data)}\n"
+        f"Net: {fmt(revenue - expenses, data)} | Streak: {streak(data)} days"
+    )
+
+
+def choose_csv_file():
+    try:
+        from AppKit import NSModalResponseOK, NSOpenPanel
+
+        panel = NSOpenPanel.openPanel()
+        panel.setCanChooseFiles_(True)
+        panel.setCanChooseDirectories_(False)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setAllowedFileTypes_(["csv"])
+        return panel.URL().path() if panel.runModal() == NSModalResponseOK else None
+    except Exception:
+        return None
+
+
+def copy_to_clipboard(text):
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+
+        board = NSPasteboard.generalPasteboard()
+        board.clearContents()
+        board.setString_forType_(text, NSPasteboardTypeString)
+        return True
+    except Exception:
+        return False
+
+
 def streak(data):
     s = 0
     today = date.today()
     for i in range(365):
         day = today - timedelta(days=i)
         day_str = day.isoformat()
-        if any(e["timestamp"].startswith(day_str) for e in data.get("revenue", [])):
+        if any(e["timestamp"].startswith(day_str) for e in active_entries(data, "revenue")):
             s += 1
         else:
             break
@@ -549,7 +610,7 @@ def best_streak(data):
     for i in range(365):
         day = today - timedelta(days=i)
         day_str = day.isoformat()
-        if any(e["timestamp"].startswith(day_str) for e in data.get("revenue", [])):
+        if any(e["timestamp"].startswith(day_str) for e in active_entries(data, "revenue")):
             s += 1
             best = max(best, s)
         else:
@@ -559,7 +620,7 @@ def best_streak(data):
 
 def expense_by_category(data):
     cats = {}
-    for e in data.get("expenses", []):
+    for e in active_entries(data, "expenses"):
         cat = e.get("category", "Other")
         cats[cat] = cats.get(cat, 0) + e["amount"]
     return dict(sorted(cats.items(), key=lambda x: -x[1]))
@@ -592,8 +653,11 @@ def fmt(amount, data=None):
 
 def recent_entries(data, limit=5):
     entries = []
+    goal_id = active_goal(data)["id"]
     for entry_type in ("revenue", "expenses"):
         for idx, entry in enumerate(data.get(entry_type, [])):
+            if entry.get("goal_id", goal_id) != goal_id:
+                continue
             entries.append((entry.get("timestamp", ""), entry_type, idx, entry))
     entries.sort(key=lambda item: item[0], reverse=True)
     return entries[:limit]
@@ -654,9 +718,9 @@ def export_csv(data):
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Type", "Amount", "Description", "Category", "Date"])
-        for e in data.get("revenue", []):
+        for e in active_entries(data, "revenue"):
             writer.writerow(["Revenue", e["amount"], e.get("description", ""), "", e["timestamp"][:10]])
-        for e in data.get("expenses", []):
+        for e in active_entries(data, "expenses"):
             writer.writerow(["Expense", e["amount"], e.get("description", ""), e.get("category", "Other"), e["timestamp"][:10]])
     return path
 
@@ -1091,6 +1155,7 @@ class Hustler(rumps.App):
             "description": description or "Recurring entry",
             "category": category,
             "next_due": due_date.isoformat(),
+            "goal_id": active_goal(self.data)["id"],
         })
         save_data(self.data)
 
@@ -1106,11 +1171,11 @@ class Hustler(rumps.App):
         self._record_entry(entry_type, amount, description, category)
 
     def _import_csv(self, _):
-        path = self._settings_input("Import CSV", "Paste the full path to a CSV file.", "")
-        if path is None or not path:
+        path = choose_csv_file()
+        if path is None:
             return
         try:
-            added = import_csv_entries(self.data, os.path.expanduser(path))
+            added = import_csv_entries(self.data, path)
         except OSError as error:
             rumps.alert(title="Import failed", message=str(error))
             return
@@ -1126,6 +1191,101 @@ class Hustler(rumps.App):
 
     def _monthly_review(self, _):
         rumps.alert(title=f"{date.today():%B} Review", message=monthly_review(self.data), ok="Done")
+
+    def _weekly_recap(self, _):
+        recap = weekly_recap(self.data)
+        copied = copy_to_clipboard(recap)
+        rumps.alert(
+            title="Weekly Recap",
+            message=f"{recap}\n\n{'Copied to your clipboard.' if copied else 'Ready to share.'}",
+            ok="Done",
+        )
+
+    def _select_recent_entry(self, title):
+        entries = recent_entries(self.data, limit=12)
+        if not entries:
+            rumps.alert(title=title, message="No entries exist for the active goal yet.")
+            return None
+        options = "\n".join(
+            f"{index}. {entry_summary(entry_type, entry, self.data)}"
+            for index, (_, entry_type, _, entry) in enumerate(entries, start=1)
+        )
+        choice = self._settings_input(title, f"Choose an entry:\n{options}", "1")
+        if choice is None:
+            return None
+        try:
+            return entries[int(choice) - 1]
+        except (ValueError, IndexError):
+            rumps.alert(title=title, message="Enter an entry number from the list.")
+            return None
+
+    def _edit_entry(self, _):
+        selected = self._select_recent_entry("Edit Entry")
+        if not selected:
+            return
+        _, entry_type, _, entry = selected
+        amount_text = self._settings_input("Edit Entry", "Amount.", f"{entry['amount']:.2f}")
+        description = self._settings_input("Edit Entry", "Description.", entry.get("description", ""))
+        if amount_text is None or description is None:
+            return
+        try:
+            amount = float(amount_text.replace(currency(self.data), "").replace(",", ""))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            rumps.alert(title="Invalid amount", message="Enter a positive number.")
+            return
+        entry["amount"] = amount
+        entry["description"] = description or "No description"
+        if entry_type == "expenses":
+            category = self._settings_input("Edit Entry", f"Category: {', '.join(EXPENSE_CATEGORIES)}", entry.get("category", "Other"))
+            if category is None:
+                return
+            entry["category"] = category if category in EXPENSE_CATEGORIES else "Other"
+        save_data(self.data)
+        self._update_title()
+        self._build_menu()
+
+    def _delete_entry(self, _):
+        selected = self._select_recent_entry("Delete Entry")
+        if not selected:
+            return
+        _, entry_type, index, entry = selected
+        response = rumps.alert(
+            title="Delete Entry?",
+            message=entry_summary(entry_type, entry, self.data),
+            ok="Delete",
+            cancel="Cancel",
+        )
+        if response != 1:
+            return
+        del self.data[entry_type][index]
+        save_data(self.data)
+        self._update_title()
+        self._build_menu()
+
+    def _manage_recurring(self, _):
+        goal_id = active_goal(self.data)["id"]
+        items = [item for item in self.data.get("recurring", []) if item.get("goal_id", goal_id) == goal_id]
+        if not items:
+            rumps.alert(title="Recurring Entries", message="No monthly entries are set for this goal.")
+            return
+        options = "\n".join(
+            f"{index}. {item['description']}  {currency(self.data)}{item['amount']:,.2f}  / month"
+            for index, item in enumerate(items, start=1)
+        )
+        choice = self._settings_input("Recurring Entries", f"Choose an entry to remove:\n{options}", "1")
+        if choice is None:
+            return
+        try:
+            selected = items[int(choice) - 1]
+        except (ValueError, IndexError):
+            rumps.alert(title="Recurring Entries", message="Enter an entry number from the list.")
+            return
+        if rumps.alert(title="Remove Recurring Entry?", message=selected["description"], ok="Remove", cancel="Cancel") != 1:
+            return
+        self.data["recurring"].remove(selected)
+        save_data(self.data)
 
     def _update_title(self):
         net = net_profit(self.data)
@@ -1214,6 +1374,7 @@ class Hustler(rumps.App):
 
         tools_menu = rumps.MenuItem("🛠 Tools")
         tools_menu.add(rumps.MenuItem("📋 Monthly Review", callback=self._monthly_review))
+        tools_menu.add(rumps.MenuItem("📣 Weekly Recap", callback=self._weekly_recap))
         tools_menu.add(rumps.MenuItem("📥 Import CSV", callback=self._import_csv))
         tools_menu.add(rumps.MenuItem("📤 Export CSV", callback=self._export_csv))
         tools_menu.add(rumps.MenuItem("🖼 Export Image", callback=self._export_image))
@@ -1225,8 +1386,13 @@ class Hustler(rumps.App):
         settings_menu.add(rumps.MenuItem("🔄 Switch Goal", callback=self._switch_goal))
         settings_menu.add(rumps.MenuItem("💳 Set Category Budget", callback=self._set_budget))
         settings_menu.add(rumps.MenuItem("🔁 Add Monthly Recurring", callback=self._add_recurring))
+        settings_menu.add(rumps.MenuItem("🗂 Manage Recurring", callback=self._manage_recurring))
         self.menu.add(settings_menu)
-        self.menu.add(rumps.MenuItem("↩️ Undo Last Entry", callback=self._undo_last_entry))
+        entries_menu = rumps.MenuItem("🧾 Manage Entries")
+        entries_menu.add(rumps.MenuItem("✏️ Edit Recent Entry", callback=self._edit_entry))
+        entries_menu.add(rumps.MenuItem("🗑 Delete Recent Entry", callback=self._delete_entry))
+        entries_menu.add(rumps.MenuItem("↩️ Undo Last Entry", callback=self._undo_last_entry))
+        self.menu.add(entries_menu)
         self.menu.add(rumps.MenuItem("🔄 Reset Month", callback=self._reset_month))
         self.menu.add(rumps.separator)
 
@@ -1241,6 +1407,7 @@ class Hustler(rumps.App):
             "amount": amount,
             "description": description or "No description",
             "timestamp": datetime.now().isoformat(),
+            "goal_id": active_goal(self.data)["id"],
         }
         if entry_type == "expenses" and category:
             entry["category"] = category
