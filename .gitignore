@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+
+# Local app data and generated exports
+hustler_data.json
+hustler_progress.png
+hustler_export.csv
+
+# Local macOS build/test artifacts
+Hustler.app/
+Hustler.iconset/
+
+# macOS metadata
+.DS_Store
