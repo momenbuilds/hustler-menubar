@@ -3,6 +3,7 @@ import rumps
 import json
 import os
 import csv
+import math
 from datetime import datetime, date, timedelta
 
 DEFAULT_GOAL = 5000
@@ -147,12 +148,23 @@ MILESTONES = [0.25, 0.50, 0.75, 1.0]
 
 def default_settings():
     today = date.today()
+    target_date = today + timedelta(days=DEFAULT_GOAL_DAYS)
     return {
         "goal": DEFAULT_GOAL,
         "currency": DEFAULT_CURRENCY,
         "start_date": today.isoformat(),
-        "goal_date": (today + timedelta(days=DEFAULT_GOAL_DAYS)).isoformat(),
+        "goal_date": target_date.isoformat(),
         "onboarded": False,
+        "goals": [
+            {
+                "id": "main",
+                "name": "Main Goal",
+                "target": DEFAULT_GOAL,
+                "start_date": today.isoformat(),
+                "target_date": target_date.isoformat(),
+            }
+        ],
+        "active_goal_id": "main",
     }
 
 
@@ -164,6 +176,8 @@ def load_data():
         "milestones": [],
         "last_reset": None,
         "daily_log": {},
+        "budgets": {},
+        "recurring": [],
         "settings": default_settings(),
     }
     if os.path.exists(DATA_FILE):
@@ -180,7 +194,9 @@ def load_data():
             settings = {}
             data["settings"] = settings
         for key, value in default["settings"].items():
-            settings.setdefault(key, value)
+            if key not in {"goals", "active_goal_id"}:
+                settings.setdefault(key, value)
+        normalize_goal_settings(settings)
         return data
 
     save_data(default)
@@ -199,9 +215,58 @@ def settings(data):
     return data["settings"]
 
 
+def normalize_goal_settings(config):
+    goals = config.get("goals")
+    if not isinstance(goals, list) or not goals:
+        goals = [
+            {
+                "id": "main",
+                "name": "Main Goal",
+                "target": config.get("goal", DEFAULT_GOAL),
+                "start_date": config.get("start_date", date.today().isoformat()),
+                "target_date": config.get("goal_date", (date.today() + timedelta(days=DEFAULT_GOAL_DAYS)).isoformat()),
+            }
+        ]
+        config["goals"] = goals
+
+    valid_goals = []
+    for index, goal in enumerate(goals, start=1):
+        if not isinstance(goal, dict):
+            continue
+        goal.setdefault("id", f"goal-{index}")
+        goal.setdefault("name", f"Goal {index}")
+        goal.setdefault("target", DEFAULT_GOAL)
+        goal.setdefault("start_date", date.today().isoformat())
+        goal.setdefault("target_date", (date.today() + timedelta(days=DEFAULT_GOAL_DAYS)).isoformat())
+        valid_goals.append(goal)
+    config["goals"] = valid_goals or goals
+
+    active_id = config.get("active_goal_id")
+    if not any(goal["id"] == active_id for goal in config["goals"]):
+        config["active_goal_id"] = config["goals"][0]["id"]
+    sync_legacy_goal_settings(config)
+
+
+def active_goal(data):
+    config = settings(data)
+    normalize_goal_settings(config)
+    active_id = config["active_goal_id"]
+    return next(goal for goal in config["goals"] if goal["id"] == active_id)
+
+
+def sync_legacy_goal_settings(config):
+    active_id = config.get("active_goal_id")
+    active = next((goal for goal in config.get("goals", []) if goal.get("id") == active_id), None)
+    if not active:
+        return
+    config["goal"] = active["target"]
+    config["start_date"] = active["start_date"]
+    config["goal_date"] = active["target_date"]
+
+
 def goal_amount(data):
     try:
-        return max(float(settings(data)["goal"]), 0)
+        return max(float(active_goal(data)["target"]), 0)
     except (KeyError, TypeError, ValueError):
         return DEFAULT_GOAL
 
@@ -221,11 +286,11 @@ def configured_date(data, key, fallback):
 
 
 def start_date(data):
-    return configured_date(data, "start_date", date.today())
+    return configured_date({"settings": active_goal(data)}, "start_date", date.today())
 
 
 def goal_date(data):
-    return configured_date(data, "goal_date", date.today() + timedelta(days=DEFAULT_GOAL_DAYS))
+    return configured_date({"settings": active_goal(data)}, "target_date", date.today() + timedelta(days=DEFAULT_GOAL_DAYS))
 
 
 def font(size, bold=False):
@@ -313,6 +378,155 @@ def pace_status(data):
         "elapsed_days": elapsed_days,
         "total_days": total_days,
     }
+
+
+def forecast(data):
+    net = net_profit(data)
+    remaining = max(goal_amount(data) - net, 0)
+    if remaining == 0:
+        return {"label": "Goal reached", "date": date.today()}
+
+    elapsed = max((date.today() - start_date(data)).days + 1, 1)
+    average = net / elapsed
+    if average <= 0:
+        return {"label": "No forecast", "date": None}
+
+    return {
+        "label": "Forecast",
+        "date": date.today() + timedelta(days=math.ceil(remaining / average)),
+    }
+
+
+def month_expenses_by_category(data):
+    month_start = date.today().replace(day=1).isoformat()
+    totals = {}
+    for entry in data.get("expenses", []):
+        if entry.get("timestamp", "")[:10] < month_start:
+            continue
+        category = entry.get("category", "Other")
+        totals[category] = totals.get(category, 0) + entry["amount"]
+    return totals
+
+
+def budget_statuses(data):
+    spent = month_expenses_by_category(data)
+    statuses = []
+    for category, limit in data.get("budgets", {}).items():
+        try:
+            limit = float(limit)
+        except (TypeError, ValueError):
+            continue
+        if limit <= 0:
+            continue
+        amount = spent.get(category, 0)
+        statuses.append({"category": category, "spent": amount, "limit": limit, "ratio": amount / limit})
+    return sorted(statuses, key=lambda item: item["ratio"], reverse=True)
+
+
+def add_month(value):
+    year = value.year + (value.month == 12)
+    month = 1 if value.month == 12 else value.month + 1
+    last_day = (date(year, month + 1, 1) - timedelta(days=1)).day if month < 12 else 31
+    return date(year, month, min(value.day, last_day))
+
+
+def apply_due_recurring(data, today=None):
+    today = today or date.today()
+    added = []
+    for item in data.get("recurring", []):
+        try:
+            due = date.fromisoformat(item["next_due"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        while due <= today:
+            entry_type = item.get("type", "expenses")
+            entry = {
+                "amount": float(item["amount"]),
+                "description": item.get("description", "Recurring entry"),
+                "timestamp": f"{due.isoformat()}T09:00:00",
+            }
+            if entry_type == "expenses":
+                entry["category"] = item.get("category", "Other")
+            data[entry_type].append(entry)
+            added.append(entry)
+            due = add_month(due)
+        item["next_due"] = due.isoformat()
+    return added
+
+
+def parse_quick_log(text, data):
+    value = text.strip()
+    if not value or value[0] not in "+-":
+        raise ValueError("Start with + for revenue or - for an expense.")
+    parts = value[1:].strip().split(maxsplit=1)
+    if not parts:
+        raise ValueError("Enter an amount after + or -.")
+    try:
+        amount = float(parts[0].replace(currency(data), "").replace(",", ""))
+    except ValueError as error:
+        raise ValueError("Enter a valid amount.") from error
+    if amount <= 0:
+        raise ValueError("Enter a positive amount.")
+
+    entry_type = "revenue" if value[0] == "+" else "expenses"
+    description = parts[1] if len(parts) > 1 else "Quick log"
+    category = None
+    if entry_type == "expenses":
+        for candidate in EXPENSE_CATEGORIES:
+            if description.lower().startswith(candidate.lower()):
+                category = candidate
+                description = description[len(candidate):].lstrip(" :-") or candidate
+                break
+        category = category or "Other"
+    return entry_type, amount, description, category
+
+
+def import_csv_entries(data, path):
+    added = 0
+    with open(path, "r", newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            normalized = {str(key).strip().lower(): (value or "").strip() for key, value in row.items() if key}
+            amount_text = normalized.get("amount", "")
+            if not amount_text:
+                continue
+            try:
+                amount = float(amount_text.replace(currency(data), "").replace(",", ""))
+            except ValueError:
+                continue
+            type_text = normalized.get("type", "").lower()
+            entry_type = "expenses" if "expense" in type_text or amount < 0 else "revenue"
+            timestamp = normalized.get("date") or normalized.get("timestamp") or date.today().isoformat()
+            try:
+                timestamp = f"{date.fromisoformat(timestamp[:10]).isoformat()}T12:00:00"
+            except ValueError:
+                timestamp = datetime.now().isoformat()
+            entry = {
+                "amount": abs(amount),
+                "description": normalized.get("description") or normalized.get("memo") or "Imported entry",
+                "timestamp": timestamp,
+            }
+            if entry_type == "expenses":
+                entry["category"] = normalized.get("category") or "Other"
+            data[entry_type].append(entry)
+            added += 1
+    return added
+
+
+def monthly_review(data):
+    month_start = date.today().replace(day=1).isoformat()
+    revenue = sum(entry["amount"] for entry in data.get("revenue", []) if entry.get("timestamp", "")[:10] >= month_start)
+    expenses = sum(entry["amount"] for entry in data.get("expenses", []) if entry.get("timestamp", "")[:10] >= month_start)
+    categories = month_expenses_by_category(data)
+    largest = max(categories, key=categories.get) if categories else "None"
+    return "\n".join(
+        [
+            f"Revenue: {fmt(revenue, data)}",
+            f"Expenses: {fmt(expenses, data)}",
+            f"Net: {fmt(revenue - expenses, data)}",
+            f"Top spending: {largest}",
+            f"Goal progress: {pct_label(net_profit(data), data)}",
+        ]
+    )
 
 
 def streak(data):
@@ -652,6 +866,7 @@ class Hustler(rumps.App):
         self.data = load_data()
         self._quote_idx = 0
         self._ensure_onboarded()
+        self._apply_recurring_on_startup()
         self._build_menu()
         self._update_title()
         rumps.timer(QUOTE_ROTATION_SECONDS)(self._cycle_title)
@@ -682,7 +897,7 @@ class Hustler(rumps.App):
         return response.text.strip() if response.clicked else None
 
     def _edit_goal_settings(self, _=None, first_run=False):
-        current = settings(self.data)
+        current = active_goal(self.data)
         goal_text = self._settings_input(
             "Goal Settings",
             "What is your target amount?",
@@ -690,7 +905,7 @@ class Hustler(rumps.App):
         )
         if goal_text is None:
             if first_run:
-                current["onboarded"] = True
+                settings(self.data)["onboarded"] = True
                 save_data(self.data)
             return
 
@@ -735,13 +950,12 @@ class Hustler(rumps.App):
             )
             return self._edit_goal_settings(None, first_run=first_run)
 
-        self.data["settings"] = {
-            "goal": goal,
-            "currency": symbol,
-            "start_date": configured_start.isoformat(),
-            "goal_date": configured_goal.isoformat(),
-            "onboarded": True,
-        }
+        current["target"] = goal
+        current["start_date"] = configured_start.isoformat()
+        current["target_date"] = configured_goal.isoformat()
+        settings(self.data)["currency"] = symbol
+        settings(self.data)["onboarded"] = True
+        sync_legacy_goal_settings(settings(self.data))
         save_data(self.data)
         self._update_title()
         self._build_menu()
@@ -751,6 +965,167 @@ class Hustler(rumps.App):
             message="",
             sound=False,
         )
+
+    def _apply_recurring_on_startup(self):
+        added = apply_due_recurring(self.data)
+        if not added:
+            return
+        check_achievements(self.data)
+        check_milestones(self.data)
+        save_data(self.data)
+
+    def _add_goal(self, _):
+        name = self._settings_input("Add Goal", "Name this goal.", "New Goal")
+        if name is None or not name:
+            return
+        amount_text = self._settings_input("Add Goal", "Target amount.", "5000")
+        if amount_text is None:
+            return
+        try:
+            amount = float(amount_text.replace(currency(self.data), "").replace(",", ""))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            rumps.alert(title="Invalid goal", message="Enter a positive number.")
+            return
+        start = self._settings_input("Add Goal", "Start date (YYYY-MM-DD).", date.today().isoformat())
+        target = self._settings_input("Add Goal", "Target date (YYYY-MM-DD).", (date.today() + timedelta(days=30)).isoformat())
+        if start is None or target is None:
+            return
+        try:
+            start_date_value = date.fromisoformat(start)
+            target_date_value = date.fromisoformat(target)
+            if target_date_value < start_date_value:
+                raise ValueError
+        except ValueError:
+            rumps.alert(title="Invalid dates", message="Use YYYY-MM-DD with a target date after the start date.")
+            return
+        goals = settings(self.data)["goals"]
+        goal_id = f"goal-{int(datetime.now().timestamp())}"
+        goals.append({
+            "id": goal_id,
+            "name": name,
+            "target": amount,
+            "start_date": start_date_value.isoformat(),
+            "target_date": target_date_value.isoformat(),
+        })
+        settings(self.data)["active_goal_id"] = goal_id
+        sync_legacy_goal_settings(settings(self.data))
+        save_data(self.data)
+        self._update_title()
+        self._build_menu()
+
+    def _switch_goal(self, _):
+        goals = settings(self.data)["goals"]
+        options = "\n".join(f"{index}. {goal['name']} ({fmt(goal['target'], self.data)})" for index, goal in enumerate(goals, start=1))
+        choice = self._settings_input("Switch Goal", f"Choose a goal:\n{options}", "1")
+        if choice is None:
+            return
+        try:
+            goal = goals[int(choice) - 1]
+        except (ValueError, IndexError):
+            rumps.alert(title="Invalid choice", message="Enter a goal number from the list.")
+            return
+        settings(self.data)["active_goal_id"] = goal["id"]
+        sync_legacy_goal_settings(settings(self.data))
+        save_data(self.data)
+        self._update_title()
+        self._build_menu()
+
+    def _set_budget(self, _):
+        categories = "\n".join(f"{index}. {name}" for index, name in enumerate(EXPENSE_CATEGORIES, start=1))
+        choice = self._settings_input("Category Budget", f"Choose a category:\n{categories}", "1")
+        if choice is None:
+            return
+        try:
+            category = EXPENSE_CATEGORIES[int(choice) - 1]
+        except (ValueError, IndexError):
+            rumps.alert(title="Invalid category", message="Enter a category number from the list.")
+            return
+        current = self.data.get("budgets", {}).get(category, "")
+        amount = self._settings_input("Category Budget", f"Monthly limit for {category}. Enter 0 to remove it.", str(current))
+        if amount is None:
+            return
+        try:
+            limit = float(amount.replace(currency(self.data), "").replace(",", ""))
+            if limit < 0:
+                raise ValueError
+        except ValueError:
+            rumps.alert(title="Invalid budget", message="Enter a positive number or 0 to remove the limit.")
+            return
+        self.data.setdefault("budgets", {})
+        if limit == 0:
+            self.data["budgets"].pop(category, None)
+        else:
+            self.data["budgets"][category] = limit
+        save_data(self.data)
+        self._build_menu()
+
+    def _add_recurring(self, _):
+        kind = self._settings_input("Recurring Entry", "Type Revenue or Expense.", "Expense")
+        if kind is None:
+            return
+        entry_type = "revenue" if kind.lower().startswith("r") else "expenses"
+        amount = self._settings_input("Recurring Entry", "Monthly amount.", "")
+        description = self._settings_input("Recurring Entry", "Description.", "")
+        due = self._settings_input("Recurring Entry", "First due date (YYYY-MM-DD).", date.today().isoformat())
+        if amount is None or description is None or due is None:
+            return
+        try:
+            value = float(amount.replace(currency(self.data), "").replace(",", ""))
+            due_date = date.fromisoformat(due)
+            if value <= 0:
+                raise ValueError
+        except ValueError:
+            rumps.alert(title="Invalid recurring entry", message="Use a positive amount and a YYYY-MM-DD date.")
+            return
+        category = "Other"
+        if entry_type == "expenses":
+            category_input = self._settings_input("Recurring Entry", f"Expense category: {', '.join(EXPENSE_CATEGORIES)}", "Bills")
+            if category_input is None:
+                return
+            category = category_input if category_input in EXPENSE_CATEGORIES else "Other"
+        self.data.setdefault("recurring", []).append({
+            "type": entry_type,
+            "amount": value,
+            "description": description or "Recurring entry",
+            "category": category,
+            "next_due": due_date.isoformat(),
+        })
+        save_data(self.data)
+
+    def _quick_log(self, _):
+        response = self._settings_input("Quick Log", "Use +500 client work or -120 Food lunch.", "")
+        if response is None:
+            return
+        try:
+            entry_type, amount, description, category = parse_quick_log(response, self.data)
+        except ValueError as error:
+            rumps.alert(title="Quick Log", message=str(error))
+            return
+        self._record_entry(entry_type, amount, description, category)
+
+    def _import_csv(self, _):
+        path = self._settings_input("Import CSV", "Paste the full path to a CSV file.", "")
+        if path is None or not path:
+            return
+        try:
+            added = import_csv_entries(self.data, os.path.expanduser(path))
+        except OSError as error:
+            rumps.alert(title="Import failed", message=str(error))
+            return
+        if not added:
+            rumps.alert(title="Nothing imported", message="No usable rows were found in that CSV file.")
+            return
+        check_achievements(self.data)
+        check_milestones(self.data)
+        save_data(self.data)
+        self._update_title()
+        self._build_menu()
+        rumps.notification(title="CSV imported", subtitle=f"{added} entries added", message="", sound=False)
+
+    def _monthly_review(self, _):
+        rumps.alert(title=f"{date.today():%B} Review", message=monthly_review(self.data), ok="Done")
 
     def _update_title(self):
         net = net_profit(self.data)
@@ -772,26 +1147,35 @@ class Hustler(rumps.App):
         best = best_streak(self.data)
         rate = savings_rate(self.data)
         cats = expense_by_category(self.data)
+        projection = forecast(self.data)
+        budgets = budget_statuses(self.data)
 
-        self.menu.add(rumps.MenuItem("💰 Hustler"))
+        self.menu.add(rumps.MenuItem(f"Hustler  |  {active_goal(self.data)['name']}"))
         self.menu.add(rumps.separator)
 
         symbol = currency(self.data)
-        self.menu.add(rumps.MenuItem(f"💵 Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📅 This Week: {symbol}{wk:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📆 This Month: {symbol}{mo:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"This Week: {symbol}{wk:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"This Month: {symbol}{mo:,.2f}"))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem(f"Progress:  {bar} {pct}"))
-        self.menu.add(rumps.MenuItem(f"🎯 Daily Target: {symbol}{target:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']} by {fmt(abs(pace['delta']), self.data)}  •  Avg {fmt(pace['avg_daily'], self.data)}/day"))
-        self.menu.add(rumps.MenuItem(f"🔥 Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
-        self.menu.add(rumps.MenuItem(f"💰 Savings Rate: {rate:.0f}%"))
+        self.menu.add(rumps.MenuItem(f"Daily Target: {symbol}{target:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"Pace: {pace['label']} by {fmt(abs(pace['delta']), self.data)}  •  Avg {fmt(pace['avg_daily'], self.data)}/day"))
+        if projection["date"]:
+            self.menu.add(rumps.MenuItem(f"Forecast: {projection['date']:%b %d, %Y}"))
+        self.menu.add(rumps.MenuItem(f"Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
+        self.menu.add(rumps.MenuItem(f"Savings Rate: {rate:.0f}%"))
+        if budgets and budgets[0]["ratio"] >= 0.8:
+            budget = budgets[0]
+            self.menu.add(rumps.MenuItem(f"Budget: {budget['category']} at {int(budget['ratio'] * 100)}%"))
         self.menu.add(rumps.separator)
 
-        self.menu.add(rumps.MenuItem("⚡ Quick Add"))
+        quick_add = rumps.MenuItem("Quick Add")
         for amount in [25, 50, 100, 250, 500]:
-            self.menu.add(rumps.MenuItem(f"  +{symbol}{amount}", callback=self._quick_add))
+            quick_add.add(rumps.MenuItem(f"+{symbol}{amount}", callback=self._quick_add))
+        self.menu.add(quick_add)
+        self.menu.add(rumps.MenuItem("Quick Log", callback=self._quick_log))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("➕ Add Revenue", callback=self.add_revenue))
@@ -800,40 +1184,50 @@ class Hustler(rumps.App):
 
         earned = self.data.get("achievements", [])
         if earned:
-            self.menu.add(rumps.MenuItem("🏅 Achievements"))
+            self.menu.add(rumps.MenuItem("Achievements"))
             for key in earned:
                 if key in ACHIEVEMENTS:
                     ach = ACHIEVEMENTS[key]
-                    self.menu.add(rumps.MenuItem(f"  {ach['emoji']} {ach['name']}"))
+                    self.menu.add(rumps.MenuItem(f"  {ach['name']}"))
             self.menu.add(rumps.separator)
 
         reached = self.data.get("milestones", [])
         if reached:
             labels = {0.25: "25%", 0.50: "50%", 0.75: "75%", 1.0: "100%"}
-            self.menu.add(rumps.MenuItem("🎯 Milestones"))
+            self.menu.add(rumps.MenuItem("Milestones"))
             for m in sorted(reached):
-                self.menu.add(rumps.MenuItem(f"  ✅ {labels.get(m, f'{int(m*100)}%')}"))
+                self.menu.add(rumps.MenuItem(f"  {labels.get(m, f'{int(m*100)}%')}"))
             self.menu.add(rumps.separator)
 
         if cats:
-            self.menu.add(rumps.MenuItem("📊 Spending Breakdown"))
+            self.menu.add(rumps.MenuItem("Spending Breakdown"))
             for cat, total in list(cats.items())[:5]:
                 self.menu.add(rumps.MenuItem(f"  {cat}: {symbol}{total:,.2f}"))
             self.menu.add(rumps.separator)
 
         recent = recent_entries(self.data, limit=4)
         if recent:
-            self.menu.add(rumps.MenuItem("🧾 Recent Activity"))
+            self.menu.add(rumps.MenuItem("Recent Activity"))
             for _, entry_type, _, entry in recent:
                 self.menu.add(rumps.MenuItem(f"  {entry_summary(entry_type, entry, self.data)}"))
             self.menu.add(rumps.separator)
 
-        self.menu.add(rumps.MenuItem("⚙️ Settings"))
-        self.menu.add(rumps.MenuItem("  Edit Goal Settings", callback=self._edit_goal_settings))
-        self.menu.add(rumps.MenuItem("  ↩️ Undo Last Entry", callback=self._undo_last_entry))
-        self.menu.add(rumps.MenuItem("  📤 Export CSV", callback=self._export_csv))
-        self.menu.add(rumps.MenuItem("  🖼️ Export Image", callback=self._export_image))
-        self.menu.add(rumps.MenuItem("  🔄 Reset Month", callback=self._reset_month))
+        tools_menu = rumps.MenuItem("Tools")
+        tools_menu.add(rumps.MenuItem("Monthly Review", callback=self._monthly_review))
+        tools_menu.add(rumps.MenuItem("Import CSV", callback=self._import_csv))
+        tools_menu.add(rumps.MenuItem("Export CSV", callback=self._export_csv))
+        tools_menu.add(rumps.MenuItem("Export Image", callback=self._export_image))
+        self.menu.add(tools_menu)
+
+        settings_menu = rumps.MenuItem("Settings")
+        settings_menu.add(rumps.MenuItem("Edit Active Goal", callback=self._edit_goal_settings))
+        settings_menu.add(rumps.MenuItem("Add Goal", callback=self._add_goal))
+        settings_menu.add(rumps.MenuItem("Switch Goal", callback=self._switch_goal))
+        settings_menu.add(rumps.MenuItem("Set Category Budget", callback=self._set_budget))
+        settings_menu.add(rumps.MenuItem("Add Monthly Recurring", callback=self._add_recurring))
+        self.menu.add(settings_menu)
+        self.menu.add(rumps.MenuItem("Undo Last Entry", callback=self._undo_last_entry))
+        self.menu.add(rumps.MenuItem("Reset Month", callback=self._reset_month))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("Quit", callback=self.quit_app))

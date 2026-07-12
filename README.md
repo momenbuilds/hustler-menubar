@@ -10,8 +10,12 @@ It has no account, server, analytics, subscription, or cloud sync.
 
 - Set a money goal during first launch, without editing Python code.
 - Track revenue and expenses with a description and expense category.
-- See net profit, goal percentage, daily target, pace, streaks, savings rate, and recent activity.
+- See net profit, goal percentage, daily target, pace, forecast date, streaks, savings rate, and recent activity.
 - Add common revenue amounts quickly.
+- Add recurring monthly income or expenses.
+- Set monthly category budgets and get an alert when a budget is nearly used.
+- Keep multiple goals and switch the active goal whenever you need to.
+- Import a CSV file and review the current month in the app.
 - Undo the latest revenue or expense entry.
 - Export your entries as CSV and a shareable progress image.
 - Change the goal amount, currency, and dates whenever you need to.
@@ -59,12 +63,19 @@ To change them later, open the menu bar item and select `Settings > Edit Goal Se
 Click the menu bar item to open Hustler.
 
 - `Quick Add`: record a common revenue amount.
+- `Quick Log`: type `+500 client work` or `-120 Food lunch` for a fast entry.
 - `Add Revenue`: record a custom revenue entry.
 - `Add Expense`: record an expense and category.
 - `Undo Last Entry`: remove the newest revenue or expense entry.
 - `Export CSV`: writes `hustler_export.csv` to Downloads.
 - `Export Image`: writes `hustler_progress.png` to Downloads.
 - `Reset Month`: clears revenue and expenses, but retains achievements and goal settings.
+
+## Goals, Budgets, And Tools
+
+Open `Settings` to edit the active goal, add another goal, switch goals, set a category budget, or add a monthly recurring entry. Recurring entries are added when Hustler next opens, so they do not require a background process.
+
+Open `Tools` for a monthly review, CSV import, and exports. Hustler imports its own CSV exports and common CSV files with `Amount`, `Date`, and optional `Description`, `Type`, and `Category` columns.
 
 ## Local Data And Privacy
 
