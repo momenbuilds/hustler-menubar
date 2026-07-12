@@ -5,18 +5,17 @@ import os
 import csv
 from datetime import datetime, date, timedelta
 
-GOAL = 5000
-GOAL_DATE = date(2026, 7, 12)
-START_DATE = date(2026, 7, 1)
-CURRENCY = "$"
+DEFAULT_GOAL = 5000
+DEFAULT_CURRENCY = "$"
+DEFAULT_GOAL_DAYS = 30
 QUOTE_ROTATION_SECONDS = 300
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(SCRIPT_DIR, "hustler_data.json")
+DATA_FILE = os.environ.get("HUSTLER_DATA_FILE", os.path.join(SCRIPT_DIR, "hustler_data.json"))
 ASSET_DIR = os.path.join(SCRIPT_DIR, "assets")
 MENU_BAR_ICON_FILE = os.path.join(ASSET_DIR, "hustler_menubar_icon.png")
 APP_ICON_FILE = os.path.join(ASSET_DIR, "hustler_app_icon.png")
-EXPORT_DIR = os.path.expanduser("~/Downloads")
+EXPORT_DIR = os.environ.get("HUSTLER_EXPORT_DIR", os.path.expanduser("~/Downloads"))
 
 EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Shopping", "Health", "Entertainment", "Other"]
 
@@ -135,15 +134,26 @@ QUOTES = [
 
 ACHIEVEMENTS = {
     "first_dollar": {"name": "First Dollar", "emoji": "💵", "threshold": 1},
-    "club_500": {"name": "$500 Club", "emoji": "🔥", "threshold": 500},
-    "club_1k": {"name": "$1k Club", "emoji": "💎", "threshold": 1000},
-    "halfway": {"name": "Halfway There", "emoji": "⚡", "threshold": GOAL / 2},
-    "goal_crusher": {"name": "Goal Crusher", "emoji": "🏆", "threshold": GOAL},
+    "club_500": {"name": "500 Club", "emoji": "🔥", "threshold": 500},
+    "club_1k": {"name": "1K Club", "emoji": "💎", "threshold": 1000},
+    "halfway": {"name": "Halfway There", "emoji": "⚡", "threshold": None},
+    "goal_crusher": {"name": "Goal Crusher", "emoji": "🏆", "threshold": None},
     "streak_7": {"name": "7-Day Streak", "emoji": "🔥", "threshold": -1},
     "streak_30": {"name": "30-Day Streak", "emoji": "🌋", "threshold": -1},
 }
 
 MILESTONES = [0.25, 0.50, 0.75, 1.0]
+
+
+def default_settings():
+    today = date.today()
+    return {
+        "goal": DEFAULT_GOAL,
+        "currency": DEFAULT_CURRENCY,
+        "start_date": today.isoformat(),
+        "goal_date": (today + timedelta(days=DEFAULT_GOAL_DAYS)).isoformat(),
+        "onboarded": False,
+    }
 
 
 def load_data():
@@ -154,23 +164,68 @@ def load_data():
         "milestones": [],
         "last_reset": None,
         "daily_log": {},
+        "settings": default_settings(),
     }
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            data = json.load(f)
+        try:
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            data = default
         for key in default:
             if key not in data:
                 data[key] = default[key]
-        if data.get("revenue") or data.get("expenses"):
-            return data
+        settings = data.get("settings")
+        if not isinstance(settings, dict):
+            settings = {}
+            data["settings"] = settings
+        for key, value in default["settings"].items():
+            settings.setdefault(key, value)
+        return data
 
     save_data(default)
     return default
 
 
 def save_data(data):
+    directory = os.path.dirname(DATA_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def settings(data):
+    return data["settings"]
+
+
+def goal_amount(data):
+    try:
+        return max(float(settings(data)["goal"]), 0)
+    except (KeyError, TypeError, ValueError):
+        return DEFAULT_GOAL
+
+
+def currency(data=None):
+    if data is None:
+        return DEFAULT_CURRENCY
+    value = str(settings(data).get("currency", DEFAULT_CURRENCY)).strip()
+    return value or DEFAULT_CURRENCY
+
+
+def configured_date(data, key, fallback):
+    try:
+        return date.fromisoformat(settings(data)[key])
+    except (KeyError, TypeError, ValueError):
+        return fallback
+
+
+def start_date(data):
+    return configured_date(data, "start_date", date.today())
+
+
+def goal_date(data):
+    return configured_date(data, "goal_date", date.today() + timedelta(days=DEFAULT_GOAL_DAYS))
 
 
 def font(size, bold=False):
@@ -221,30 +276,33 @@ def month_revenue(data):
     return sum(e["amount"] for e in data.get("revenue", []) if e["timestamp"][:10] >= month_start)
 
 
-def days_left():
-    return max((GOAL_DATE - date.today()).days, 0)
+def days_left(data):
+    return max((goal_date(data) - date.today()).days, 0)
 
 
 def daily_target(data):
-    dl = days_left()
+    dl = days_left(data)
     if dl <= 0:
         return 0
-    remaining = max(GOAL - net_profit(data), 0)
+    remaining = max(goal_amount(data) - net_profit(data), 0)
     return remaining / dl
 
 
-def goal_progress(total):
-    if GOAL <= 0:
+def goal_progress(total, data):
+    goal = goal_amount(data)
+    if goal <= 0:
         return 0
-    return max(0, min(total / GOAL, 1.0))
+    return max(0, min(total / goal, 1.0))
 
 
 def pace_status(data):
     today = date.today()
-    total_days = max((GOAL_DATE - START_DATE).days + 1, 1)
-    elapsed_days = max((today - START_DATE).days + 1, 1)
+    start = start_date(data)
+    target_date = goal_date(data)
+    total_days = max((target_date - start).days + 1, 1)
+    elapsed_days = max((today - start).days + 1, 1)
     elapsed_ratio = min(elapsed_days / total_days, 1.0)
-    expected = GOAL * elapsed_ratio
+    expected = goal_amount(data) * elapsed_ratio
     net = net_profit(data)
     delta = net - expected
     return {
@@ -300,20 +358,22 @@ def savings_rate(data):
     return ((rev - expense_total(data)) / rev) * 100
 
 
-def progress_bar(total):
-    pct = goal_progress(total)
+def progress_bar(total, data):
+    pct = goal_progress(total, data)
     filled = round(pct * 20)
     return "█" * filled + "░" * (20 - filled)
 
 
-def pct_label(total):
-    return f"{int((total / GOAL) * 100)}%"
+def pct_label(total, data):
+    goal = goal_amount(data)
+    return f"{int((total / goal) * 100) if goal else 0}%"
 
 
-def fmt(amount):
+def fmt(amount, data=None):
+    symbol = currency(data)
     if abs(amount) >= 1000:
-        return f"{CURRENCY}{amount/1000:.1f}k"
-    return f"{CURRENCY}{amount:,.0f}"
+        return f"{symbol}{amount/1000:.1f}k"
+    return f"{symbol}{amount:,.0f}"
 
 
 def recent_entries(data, limit=5):
@@ -325,11 +385,11 @@ def recent_entries(data, limit=5):
     return entries[:limit]
 
 
-def entry_summary(entry_type, entry):
+def entry_summary(entry_type, entry, data=None):
     prefix = "+" if entry_type == "revenue" else "-"
     desc = entry.get("description", "No description")
     day = entry.get("timestamp", "")[:10] or "unknown"
-    return f"{prefix}{CURRENCY}{entry['amount']:,.2f}  {desc}  ({day})"
+    return f"{prefix}{currency(data)}{entry['amount']:,.2f}  {desc}  ({day})"
 
 
 def check_achievements(data):
@@ -346,7 +406,13 @@ def check_achievements(data):
             elif key == "streak_30" and s >= 30:
                 earned.append(key)
                 new_achs.append(ach)
-            elif ach["threshold"] > 0 and total >= ach["threshold"]:
+            elif key == "halfway" and total >= goal_amount(data) / 2:
+                earned.append(key)
+                new_achs.append(ach)
+            elif key == "goal_crusher" and total >= goal_amount(data):
+                earned.append(key)
+                new_achs.append(ach)
+            elif ach["threshold"] and total >= ach["threshold"]:
                 earned.append(key)
                 new_achs.append(ach)
 
@@ -356,7 +422,8 @@ def check_achievements(data):
 
 def check_milestones(data):
     total = net_profit(data)
-    pct = total / GOAL
+    goal = goal_amount(data)
+    pct = total / goal if goal else 0
     reached = data.get("milestones", [])
     new_miles = []
     for m in MILESTONES:
@@ -368,6 +435,7 @@ def check_milestones(data):
 
 
 def export_csv(data):
+    os.makedirs(EXPORT_DIR, exist_ok=True)
     path = os.path.join(EXPORT_DIR, "hustler_export.csv")
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -487,10 +555,11 @@ def export_image(data):
     s = streak(data)
     bs = best_streak(data)
     rate = savings_rate(data)
-    pct = goal_progress(net)
+    pct = goal_progress(net, data)
     pace = pace_status(data)
     pace_color = GREEN if pace["delta"] >= 0 else RED
-    remaining = max(GOAL - net, 0)
+    goal = goal_amount(data)
+    remaining = max(goal - net, 0)
     quote = QUOTES[date.today().day % len(QUOTES)]
 
     pad = 64
@@ -500,8 +569,8 @@ def export_image(data):
 
     card(pad, 180, W - pad, 500)
     draw.text((pad + 46, 230), "NET PROFIT", fill=MUTED, font=font(22))
-    fit_text(pad + 46, 270, fmt(net), 610, 96, TEXT, bold=True)
-    draw.text((pad + 50, 390), f"{fmt(remaining)} left to hit {fmt(GOAL)}", fill=MUTED, font=font(28))
+    fit_text(pad + 46, 270, fmt(net, data), 610, 96, TEXT, bold=True)
+    draw.text((pad + 50, 390), f"{fmt(remaining, data)} left to hit {fmt(goal, data)}", fill=MUTED, font=font(28))
 
     cx, cy, r = W - pad - 170, 338, 112
     draw.arc((cx - r, cy - r, cx + r, cy + r), 0, 360, fill=LINE, width=28)
@@ -516,28 +585,28 @@ def export_image(data):
     y = 540
     gap = 22
     w = (W - pad * 2 - gap * 2) // 3
-    metric_card(pad, y, w, "Revenue", fmt(rev), GREEN)
-    metric_card(pad + w + gap, y, w, "Expenses", fmt(exp), RED)
+    metric_card(pad, y, w, "Revenue", fmt(rev, data), GREEN)
+    metric_card(pad + w + gap, y, w, "Expenses", fmt(exp, data), RED)
     metric_card(pad + (w + gap) * 2, y, w, "Savings", f"{rate:.0f}%", CYAN)
 
     y = 730
     card(pad, y, W - pad, y + 230)
     draw.text((pad + 34, y + 32), "GOAL PACE", fill=MUTED, font=font(22))
     draw.text((pad + 34, y + 72), pace["label"], fill=pace_color, font=font(50, bold=True))
-    draw.text((pad + 34, y + 142), f"{fmt(abs(pace['delta']))} vs plan", fill=TEXT, font=font(28))
-    text_right(W - pad - 34, y + 70, f"{fmt(pace['needed_daily'])}/day", font(42, bold=True), TEXT)
+    draw.text((pad + 34, y + 142), f"{fmt(abs(pace['delta']), data)} vs plan", fill=TEXT, font=font(28))
+    text_right(W - pad - 34, y + 70, f"{fmt(pace['needed_daily'], data)}/day", font(42, bold=True), TEXT)
     text_right(W - pad - 34, y + 126, "needed from here", font(22), MUTED)
     draw.line((pad + 34, y + 184, W - pad - 34, y + 184), fill=LINE, width=2)
-    draw.text((pad + 34, y + 196), f"Average: {fmt(pace['avg_daily'])}/day", fill=MUTED, font=font(22))
+    draw.text((pad + 34, y + 196), f"Average: {fmt(pace['avg_daily'], data)}/day", fill=MUTED, font=font(22))
     text_right(W - pad - 34, y + 196, f"{pace['elapsed_days']} of {pace['total_days']} days", font(22), MUTED)
 
     y = 1000
     card(pad, y, W - pad, y + 250)
     draw.text((pad + 34, y + 30), "MOMENTUM", fill=MUTED, font=font(22))
     rows = [
-        ("Today", f"+{CURRENCY}{today_revenue(data):,.2f}   -{CURRENCY}{today_expenses(data):,.2f}", GREEN),
-        ("This week", fmt(week_revenue(data)), GOLD),
-        ("This month", fmt(month_revenue(data)), CYAN),
+        ("Today", f"+{currency(data)}{today_revenue(data):,.2f}   -{currency(data)}{today_expenses(data):,.2f}", GREEN),
+        ("This week", fmt(week_revenue(data), data), GOLD),
+        ("This month", fmt(month_revenue(data), data), CYAN),
         ("Streak", f"{s} day{'s' if s != 1 else ''}  |  best {bs}", RED if s == 0 else GREEN),
     ]
     for i, (label, value, color) in enumerate(rows):
@@ -564,6 +633,7 @@ def export_image(data):
     draw.text((pad, H - 58), "Built from local Hustler data", fill=LINE, font=font(18))
     text_right(W - pad, H - 58, "hustler", font(18, bold=True), LINE)
 
+    os.makedirs(EXPORT_DIR, exist_ok=True)
     path = os.path.join(EXPORT_DIR, "hustler_progress.png")
     img.save(path, "PNG")
     return path
@@ -576,6 +646,7 @@ class Hustler(rumps.App):
         configure_macos_app()
         self.data = load_data()
         self._quote_idx = 0
+        self._ensure_onboarded()
         self._build_menu()
         self._update_title()
         rumps.timer(QUOTE_ROTATION_SECONDS)(self._cycle_title)
@@ -584,10 +655,102 @@ class Hustler(rumps.App):
         self._quote_idx = (self._quote_idx + 1) % len(QUOTES)
         self._update_title()
 
+    def _ensure_onboarded(self):
+        if settings(self.data).get("onboarded"):
+            return
+        rumps.alert(
+            title="Welcome to Hustler",
+            message="Set your target once. You can change it later from Settings.",
+            ok="Set Up",
+        )
+        self._edit_goal_settings(first_run=True)
+
+    def _settings_input(self, title, message, default_text):
+        response = rumps.Window(
+            message=message,
+            title=title,
+            default_text=default_text,
+            ok="Next",
+            cancel="Cancel",
+            dimensions=(240, 24),
+        ).run()
+        return response.text.strip() if response.clicked else None
+
+    def _edit_goal_settings(self, _=None, first_run=False):
+        current = settings(self.data)
+        goal_text = self._settings_input(
+            "Goal Settings",
+            "What is your target amount?",
+            str(int(goal_amount(self.data)) if goal_amount(self.data).is_integer() else goal_amount(self.data)),
+        )
+        if goal_text is None:
+            if first_run:
+                current["onboarded"] = True
+                save_data(self.data)
+            return
+
+        try:
+            goal = float(goal_text.replace(currency(self.data), "").replace(",", ""))
+            if goal <= 0:
+                raise ValueError
+        except ValueError:
+            rumps.alert(title="Invalid goal", message="Enter a positive number, such as 5000.")
+            return self._edit_goal_settings(None, first_run=first_run)
+
+        symbol = self._settings_input("Goal Settings", "What currency symbol should Hustler use?", currency(self.data))
+        if symbol is None:
+            return
+        symbol = symbol.strip() or DEFAULT_CURRENCY
+
+        start_text = self._settings_input(
+            "Goal Settings",
+            "When does this goal start? Use YYYY-MM-DD.",
+            start_date(self.data).isoformat(),
+        )
+        if start_text is None:
+            return
+
+        target_text = self._settings_input(
+            "Goal Settings",
+            "When is the target date? Use YYYY-MM-DD.",
+            goal_date(self.data).isoformat(),
+        )
+        if target_text is None:
+            return
+
+        try:
+            configured_start = date.fromisoformat(start_text)
+            configured_goal = date.fromisoformat(target_text)
+            if configured_goal < configured_start:
+                raise ValueError
+        except ValueError:
+            rumps.alert(
+                title="Invalid dates",
+                message="Use YYYY-MM-DD and set a target date on or after the start date.",
+            )
+            return self._edit_goal_settings(None, first_run=first_run)
+
+        self.data["settings"] = {
+            "goal": goal,
+            "currency": symbol,
+            "start_date": configured_start.isoformat(),
+            "goal_date": configured_goal.isoformat(),
+            "onboarded": True,
+        }
+        save_data(self.data)
+        self._update_title()
+        self._build_menu()
+        rumps.notification(
+            title="Goal settings saved",
+            subtitle=f"{fmt(goal, self.data)} by {configured_goal.isoformat()}",
+            message="",
+            sound=False,
+        )
+
     def _update_title(self):
         net = net_profit(self.data)
         quote = QUOTES[self._quote_idx]
-        self.title = f"{fmt(net)} | {pct_label(net)}  |  {quote}"
+        self.title = f"{fmt(net, self.data)} | {pct_label(net, self.data)}  |  {quote}"
 
     def _build_menu(self):
         self.menu.clear()
@@ -596,8 +759,8 @@ class Hustler(rumps.App):
         today_exp = today_expenses(self.data)
         wk = week_revenue(self.data)
         mo = month_revenue(self.data)
-        bar = progress_bar(net)
-        pct = pct_label(net)
+        bar = progress_bar(net, self.data)
+        pct = pct_label(net, self.data)
         target = daily_target(self.data)
         pace = pace_status(self.data)
         s = streak(self.data)
@@ -608,21 +771,22 @@ class Hustler(rumps.App):
         self.menu.add(rumps.MenuItem("💰 Hustler"))
         self.menu.add(rumps.separator)
 
-        self.menu.add(rumps.MenuItem(f"💵 Today: +${today_rev:,.2f}  -${today_exp:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📅 This Week: ${wk:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📆 This Month: ${mo:,.2f}"))
+        symbol = currency(self.data)
+        self.menu.add(rumps.MenuItem(f"💵 Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"📅 This Week: {symbol}{wk:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"📆 This Month: {symbol}{mo:,.2f}"))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem(f"Progress:  {bar} {pct}"))
-        self.menu.add(rumps.MenuItem(f"🎯 Daily Target: ${target:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']} by {fmt(abs(pace['delta']))}  •  Avg {fmt(pace['avg_daily'])}/day"))
+        self.menu.add(rumps.MenuItem(f"🎯 Daily Target: {symbol}{target:,.2f}"))
+        self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']} by {fmt(abs(pace['delta']), self.data)}  •  Avg {fmt(pace['avg_daily'], self.data)}/day"))
         self.menu.add(rumps.MenuItem(f"🔥 Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
         self.menu.add(rumps.MenuItem(f"💰 Savings Rate: {rate:.0f}%"))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("⚡ Quick Add"))
         for amount in [25, 50, 100, 250, 500]:
-            self.menu.add(rumps.MenuItem(f"  +${amount}", callback=self._quick_add))
+            self.menu.add(rumps.MenuItem(f"  +{symbol}{amount}", callback=self._quick_add))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("➕ Add Revenue", callback=self.add_revenue))
@@ -649,17 +813,18 @@ class Hustler(rumps.App):
         if cats:
             self.menu.add(rumps.MenuItem("📊 Spending Breakdown"))
             for cat, total in list(cats.items())[:5]:
-                self.menu.add(rumps.MenuItem(f"  {cat}: ${total:,.2f}"))
+                self.menu.add(rumps.MenuItem(f"  {cat}: {symbol}{total:,.2f}"))
             self.menu.add(rumps.separator)
 
         recent = recent_entries(self.data, limit=4)
         if recent:
             self.menu.add(rumps.MenuItem("🧾 Recent Activity"))
             for _, entry_type, _, entry in recent:
-                self.menu.add(rumps.MenuItem(f"  {entry_summary(entry_type, entry)}"))
+                self.menu.add(rumps.MenuItem(f"  {entry_summary(entry_type, entry, self.data)}"))
             self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("⚙️ Settings"))
+        self.menu.add(rumps.MenuItem("  Edit Goal Settings", callback=self._edit_goal_settings))
         self.menu.add(rumps.MenuItem("  ↩️ Undo Last Entry", callback=self._undo_last_entry))
         self.menu.add(rumps.MenuItem("  📤 Export CSV", callback=self._export_csv))
         self.menu.add(rumps.MenuItem("  🖼️ Export Image", callback=self._export_image))
@@ -669,7 +834,7 @@ class Hustler(rumps.App):
         self.menu.add(rumps.MenuItem("Quit", callback=self.quit_app))
 
     def _quick_add(self, sender):
-        amount = float(sender.title.replace("+$", "").replace(",", ""))
+        amount = float(sender.title.replace("+", "").replace(currency(self.data), "").replace(",", ""))
         self._record_entry("revenue", amount, "Quick add")
 
     def _record_entry(self, entry_type, amount, description, category=None):
@@ -704,9 +869,9 @@ class Hustler(rumps.App):
         emoji = "💰" if entry_type == "revenue" else "🛒"
         sign = "+" if entry_type == "revenue" else "-"
         rumps.notification(
-            title=f"{emoji} {sign}${entry['amount']:,.2f} added!",
+            title=f"{emoji} {sign}{currency(self.data)}{entry['amount']:,.2f} added!",
             subtitle=entry.get("description", "No description"),
-            message=f"Net: ${net:,.2f}  •  {pct_label(net)} to goal",
+            message=f"Net: {currency(self.data)}{net:,.2f}  •  {pct_label(net, self.data)} to goal",
             sound=False,
         )
 
@@ -741,7 +906,7 @@ class Hustler(rumps.App):
             return
 
         try:
-            amount = float(amount_resp.text.strip().replace("$", "").replace(",", ""))
+            amount = float(amount_resp.text.strip().replace(currency(self.data), "").replace(",", ""))
         except ValueError:
             rumps.alert(title="Invalid amount", message="Enter a number like 50 or 250.50")
             return
@@ -813,7 +978,7 @@ class Hustler(rumps.App):
         _, entry_type, idx, entry = recent[0]
         resp = rumps.alert(
             title="↩️ Undo Last Entry?",
-            message=entry_summary(entry_type, entry),
+            message=entry_summary(entry_type, entry, self.data),
             ok="Undo",
             cancel="Cancel",
         )
@@ -826,7 +991,7 @@ class Hustler(rumps.App):
         self._build_menu()
         rumps.notification(
             title="↩️ Entry removed",
-            subtitle=entry_summary(entry_type, entry),
+            subtitle=entry_summary(entry_type, entry, self.data),
             message="",
             sound=False,
         )

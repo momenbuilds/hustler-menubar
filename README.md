@@ -41,7 +41,7 @@ Run it:
 python3 hustler.py
 ```
 
-Hustler will appear in the macOS menu bar.
+Hustler will appear in the macOS menu bar. On first launch it asks for your target amount, currency symbol, start date, and target date. No code changes are needed.
 
 ## Install For Daily Use
 
@@ -102,21 +102,17 @@ Common actions:
 - `Export CSV`: saves `~/Downloads/hustler_export.csv`.
 - `Export Image`: saves `~/Downloads/hustler_progress.png`.
 - `Reset Month`: clears revenue and expenses while keeping achievements.
+- `Settings > Edit Goal Settings`: changes your amount, currency, or dates later.
 
-## Customize Your Goal
+## First-Run Setup
 
-Edit the constants at the top of `hustler.py`:
+The first launch opens a short setup flow. Enter a positive goal amount, a currency symbol such as `$` or `EGP`, and dates in `YYYY-MM-DD` format.
 
-```python
-GOAL = 5000
-GOAL_DATE = date(2026, 7, 12)
-START_DATE = date(2026, 7, 1)
-CURRENCY = "$"
-```
+To change these later, click the menu bar item and choose `Settings > Edit Goal Settings`. Your existing entries stay intact when you update a goal.
 
 ## Data Storage
 
-Data is stored next to the script:
+Data, including the goal settings, is stored next to the script:
 
 ```text
 hustler_data.json
