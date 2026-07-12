@@ -2,6 +2,8 @@
 
 Hustler Menu is a lightweight, local-first macOS menu bar app for tracking a financial goal. It keeps the current net profit, goal progress, and a rotating motivational quote visible in the menu bar.
 
+![Hustler progress card preview](assets/hustler-progress-preview.gif)
+
 It has no account, server, analytics, subscription, or cloud sync.
 
 ## What You Can Do
