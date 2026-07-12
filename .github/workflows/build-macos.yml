@@ -9,7 +9,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            architecture: x86_64
+            artifact: intel
+          - runner: macos-14
+            architecture: arm64
+            artifact: apple-silicon
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,11 +31,28 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           sed -i.bak "s/^APP_VERSION = \".*\"/APP_VERSION = \"$VERSION\"/" hustler.py
           rm hustler.py.bak
-      - run: bash scripts/build_macos_app.sh
+      - run: bash scripts/build_macos_app.sh ${{ matrix.architecture }}
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hustler-${{ matrix.artifact }}
+          path: dist/Hustler-macOS-${{ matrix.architecture }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS builds
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION" dist/Hustler-macOS.zip \
+          VERSION="1.${{ github.run_number }}.0"
+          gh release create "v$VERSION" dist/Hustler-macOS-*.zip \
             --title "Hustler $VERSION" \
             --generate-notes

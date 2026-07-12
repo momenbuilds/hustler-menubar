@@ -2,6 +2,7 @@
 import rumps
 import json
 import os
+import platform
 import csv
 import math
 import sys
@@ -192,8 +193,11 @@ def latest_release():
     tag = release.get("tag_name", "")
     if not tag or version_key(tag) <= version_key(APP_VERSION):
         return None
+    machine = platform.machine().lower()
+    architecture = "x86_64" if machine in {"x86_64", "amd64", "i386"} else "arm64"
+    asset_name = f"Hustler-macOS-{architecture}.zip"
     asset_url = next(
-        (asset.get("browser_download_url") for asset in release.get("assets", []) if asset.get("name") == "Hustler-macOS.zip"),
+        (asset.get("browser_download_url") for asset in release.get("assets", []) if asset.get("name") == asset_name),
         release.get("html_url"),
     )
     return {"version": tag.lstrip("v"), "url": asset_url or release.get("html_url")}

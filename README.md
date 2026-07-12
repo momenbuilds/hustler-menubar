@@ -6,7 +6,10 @@ Hustler is a private macOS menu bar app for tracking financial goals without acc
 
 ## Download
 
-Download the latest `Hustler-macOS.zip` from [Releases](https://github.com/momenbuilds/hustler-menubar/releases/latest), unzip it, and drag `Hustler.app` into Applications.
+Download the build for your Mac from [Releases](https://github.com/momenbuilds/hustler-menubar/releases/latest), unzip it, and drag `Hustler.app` into Applications:
+
+- Intel Macs: `Hustler-macOS-x86_64.zip`
+- Apple-silicon Macs (M1, M2, M3, M4): `Hustler-macOS-arm64.zip`
 
 On first launch, macOS may ask for confirmation because Hustler is not distributed through the App Store. Control-click `Hustler.app`, choose `Open`, then confirm once.
 
