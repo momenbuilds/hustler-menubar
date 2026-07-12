@@ -41,4 +41,4 @@ iconutil -c icns "$ICONSET_DIR" -o "$ICON_FILE"
   "$ROOT_DIR/hustler.py"
 
 ditto -c -k --sequesterRsrc --keepParent "$ROOT_DIR/dist/Hustler.app" "$ROOT_DIR/dist/Hustler-macOS.zip"
-print "Built: $ROOT_DIR/dist/Hustler-macOS.zip"
+echo "Built: $ROOT_DIR/dist/Hustler-macOS.zip"
