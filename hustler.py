@@ -5,8 +5,13 @@ import os
 import csv
 import math
 import sys
+import webbrowser
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from datetime import datetime, date, timedelta
 
+APP_VERSION = "1.2.0"
+RELEASES_API = "https://api.github.com/repos/momenbuilds/hustler-menubar/releases/latest"
 DEFAULT_GOAL = 5000
 DEFAULT_CURRENCY = "$"
 DEFAULT_GOAL_DAYS = 30
@@ -170,6 +175,28 @@ def default_settings():
         ],
         "active_goal_id": "main",
     }
+
+
+def version_key(version):
+    return tuple(int(part) for part in version.lstrip("v").split(".") if part.isdigit())
+
+
+def latest_release():
+    request = Request(RELEASES_API, headers={"Accept": "application/vnd.github+json", "User-Agent": "Hustler-Menu"})
+    try:
+        with urlopen(request, timeout=2) as response:
+            release = json.load(response)
+    except (OSError, URLError, json.JSONDecodeError):
+        return None
+
+    tag = release.get("tag_name", "")
+    if not tag or version_key(tag) <= version_key(APP_VERSION):
+        return None
+    asset_url = next(
+        (asset.get("browser_download_url") for asset in release.get("assets", []) if asset.get("name") == "Hustler-macOS.zip"),
+        release.get("html_url"),
+    )
+    return {"version": tag.lstrip("v"), "url": asset_url or release.get("html_url")}
 
 
 def load_data():
@@ -929,15 +956,28 @@ class Hustler(rumps.App):
         configure_macos_app()
         self.data = load_data()
         self._quote_idx = 0
+        self.update_info = None
         self._ensure_onboarded()
         self._apply_recurring_on_startup()
         self._build_menu()
         self._update_title()
         rumps.timer(QUOTE_ROTATION_SECONDS)(self._cycle_title)
+        self._update_timer = rumps.Timer(self._check_for_update, 3)
+        self._update_timer.start()
 
     def _cycle_title(self, _):
         self._quote_idx = (self._quote_idx + 1) % len(QUOTES)
         self._update_title()
+
+    def _check_for_update(self, timer):
+        timer.stop()
+        self.update_info = latest_release()
+        if self.update_info:
+            self._build_menu()
+
+    def _open_update(self, _):
+        if self.update_info and self.update_info.get("url"):
+            webbrowser.open(self.update_info["url"])
 
     def _ensure_onboarded(self):
         if settings(self.data).get("onboarded"):
@@ -1311,21 +1351,16 @@ class Hustler(rumps.App):
         budgets = budget_statuses(self.data)
 
         self.menu.add(rumps.MenuItem(f"🎯 Hustler  |  {active_goal(self.data)['name']}"))
+        if self.update_info:
+            self.menu.add(rumps.MenuItem(f"⬇️ Update Available: v{self.update_info['version']}", callback=self._open_update))
         self.menu.add(rumps.separator)
 
         symbol = currency(self.data)
         self.menu.add(rumps.MenuItem(f"💵 Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📅 This Week: {symbol}{wk:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📆 This Month: {symbol}{mo:,.2f}"))
-        self.menu.add(rumps.separator)
-
         self.menu.add(rumps.MenuItem(f"Progress:  {bar} {pct}"))
-        self.menu.add(rumps.MenuItem(f"🎯 Daily Target: {symbol}{target:,.2f}"))
-        self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']} by {fmt(abs(pace['delta']), self.data)}  •  Avg {fmt(pace['avg_daily'], self.data)}/day"))
+        self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']}  •  {fmt(target, self.data)}/day"))
         if projection["date"]:
             self.menu.add(rumps.MenuItem(f"🔮 Forecast: {projection['date']:%b %d, %Y}"))
-        self.menu.add(rumps.MenuItem(f"🔥 Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
-        self.menu.add(rumps.MenuItem(f"💰 Savings Rate: {rate:.0f}%"))
         if budgets and budgets[0]["ratio"] >= 0.8:
             budget = budgets[0]
             self.menu.add(rumps.MenuItem(f"⚠️ Budget: {budget['category']} at {int(budget['ratio'] * 100)}%"))
@@ -1342,35 +1377,46 @@ class Hustler(rumps.App):
         self.menu.add(rumps.MenuItem("➖ Add Expense", callback=self.add_expense))
         self.menu.add(rumps.separator)
 
+        insights_menu = rumps.MenuItem("📊 Insights")
+        insights_menu.add(rumps.MenuItem(f"📅 This Week: {fmt(wk, self.data)}"))
+        insights_menu.add(rumps.MenuItem(f"📆 This Month: {fmt(mo, self.data)}"))
+        insights_menu.add(rumps.MenuItem(f"🔥 Streak: {s} day{'s' if s != 1 else ''}  •  Best: {best}"))
+        insights_menu.add(rumps.MenuItem(f"💰 Savings Rate: {rate:.0f}%"))
+        if budgets:
+            budget_menu = rumps.MenuItem("💳 Budgets")
+            for budget in budgets[:5]:
+                budget_menu.add(rumps.MenuItem(f"{budget['category']}: {fmt(budget['spent'], self.data)} / {fmt(budget['limit'], self.data)}"))
+            insights_menu.add(budget_menu)
+
+        if cats:
+            spending_menu = rumps.MenuItem("💸 Spending")
+            for cat, total in list(cats.items())[:5]:
+                spending_menu.add(rumps.MenuItem(f"{cat}: {fmt(total, self.data)}"))
+            insights_menu.add(spending_menu)
+
         earned = self.data.get("achievements", [])
         if earned:
-            self.menu.add(rumps.MenuItem("🏅 Achievements"))
+            achievement_menu = rumps.MenuItem("🏅 Achievements")
             for key in earned:
                 if key in ACHIEVEMENTS:
-                    ach = ACHIEVEMENTS[key]
-                    self.menu.add(rumps.MenuItem(f"  {ach['name']}"))
-            self.menu.add(rumps.separator)
+                    achievement_menu.add(rumps.MenuItem(ACHIEVEMENTS[key]["name"]))
+            insights_menu.add(achievement_menu)
 
         reached = self.data.get("milestones", [])
         if reached:
             labels = {0.25: "25%", 0.50: "50%", 0.75: "75%", 1.0: "100%"}
-            self.menu.add(rumps.MenuItem("🏁 Milestones"))
+            milestone_menu = rumps.MenuItem("🏁 Milestones")
             for m in sorted(reached):
-                self.menu.add(rumps.MenuItem(f"  {labels.get(m, f'{int(m*100)}%')}"))
-            self.menu.add(rumps.separator)
-
-        if cats:
-            self.menu.add(rumps.MenuItem("📊 Spending Breakdown"))
-            for cat, total in list(cats.items())[:5]:
-                self.menu.add(rumps.MenuItem(f"  {cat}: {symbol}{total:,.2f}"))
-            self.menu.add(rumps.separator)
+                milestone_menu.add(rumps.MenuItem(labels.get(m, f"{int(m * 100)}%")))
+            insights_menu.add(milestone_menu)
 
         recent = recent_entries(self.data, limit=4)
         if recent:
-            self.menu.add(rumps.MenuItem("🧾 Recent Activity"))
+            recent_menu = rumps.MenuItem("🧾 Recent Activity")
             for _, entry_type, _, entry in recent:
-                self.menu.add(rumps.MenuItem(f"  {entry_summary(entry_type, entry, self.data)}"))
-            self.menu.add(rumps.separator)
+                recent_menu.add(rumps.MenuItem(entry_summary(entry_type, entry, self.data)))
+            insights_menu.add(recent_menu)
+        self.menu.add(insights_menu)
 
         tools_menu = rumps.MenuItem("🛠 Tools")
         tools_menu.add(rumps.MenuItem("📋 Monthly Review", callback=self._monthly_review))
