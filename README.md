@@ -64,53 +64,6 @@ Click the menu bar item to open Hustler.
 - `Export Image`: writes `hustler_progress.png` to Downloads.
 - `Reset Month`: clears revenue and expenses, but retains achievements and goal settings.
 
-## Install For Daily Use
-
-To keep the app outside of the cloned repository, copy the script and icon assets to `~/scripts`:
-
-```bash
-mkdir -p ~/scripts/assets
-cp hustler.py ~/scripts/hustler.py
-cp assets/*.png ~/scripts/assets/
-python3 ~/scripts/hustler.py
-```
-
-When using this installation, the local data file lives at `~/scripts/hustler_data.json`.
-
-## Start On Login
-
-Create a LaunchAgent after confirming that `python3 ~/scripts/hustler.py` works:
-
-```bash
-cat > ~/Library/LaunchAgents/com.hustler.plist << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.hustler</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$(which python3)</string>
-        <string>$HOME/scripts/hustler.py</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
-launchctl load ~/Library/LaunchAgents/com.hustler.plist
-```
-
-To stop automatic startup:
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.hustler.plist
-```
-
 ## Local Data And Privacy
 
 Hustler stores entries, achievements, milestones, and settings in `hustler_data.json` beside the script that is running. The file is ignored by Git so personal data is not committed with the app.
@@ -121,10 +74,10 @@ Nothing is sent over the network. Deleting `hustler_data.json` resets Hustler co
 
 **The app does not appear in the menu bar**
 
-Run it directly and check the terminal for an error:
+Run it from the repository folder and check the terminal for an error:
 
 ```bash
-python3 ~/scripts/hustler.py
+python3 hustler.py
 ```
 
 **Python cannot find a dependency**
@@ -133,23 +86,6 @@ Install the dependencies for the same Python interpreter used to launch the app:
 
 ```bash
 python3 -m pip install rumps pillow
-```
-
-**An old Dock icon is still visible**
-
-Quit the old script process, then start the current version:
-
-```bash
-pkill -f "$HOME/scripts/hustler.py"
-python3 ~/scripts/hustler.py
-```
-
-## Development Check
-
-Run a syntax check before committing changes:
-
-```bash
-python3 -m py_compile hustler.py
 ```
 
 ## License
