@@ -7,7 +7,11 @@ import csv
 import math
 import shutil
 import sys
+import tempfile
+import threading
 import webbrowser
+import zipfile
+import subprocess
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from datetime import datetime, date, timedelta
@@ -208,6 +212,76 @@ def latest_release():
         "url": asset_url or release.get("html_url"),
         "notes": notes[:500] or "No release notes were provided.",
     }
+
+
+def current_app_bundle():
+    """Return this app bundle's path when running as a packaged macOS app."""
+    executable = os.path.abspath(sys.executable)
+    marker = f"{os.sep}Contents{os.sep}MacOS{os.sep}"
+    if not IS_BUNDLED or marker not in executable:
+        return None
+    return executable.split(marker, 1)[0]
+
+
+def stage_update(asset_url):
+    """Download and safely unpack a Hustler release ZIP into a temporary folder."""
+    work_dir = tempfile.mkdtemp(prefix="hustler-update-")
+    archive_path = os.path.join(work_dir, "Hustler-update.zip")
+    request = Request(asset_url, headers={"User-Agent": "Hustler-Menu"})
+    try:
+        with urlopen(request, timeout=45) as response, open(archive_path, "wb") as destination:
+            shutil.copyfileobj(response, destination)
+        with zipfile.ZipFile(archive_path) as archive:
+            if archive.testzip():
+                raise ValueError("The downloaded update is corrupted.")
+            root = os.path.realpath(work_dir)
+            for member in archive.infolist():
+                destination = os.path.realpath(os.path.join(work_dir, member.filename))
+                if not destination.startswith(f"{root}{os.sep}"):
+                    raise ValueError("The downloaded update has an unsafe file path.")
+            archive.extractall(work_dir)
+        app_path = os.path.join(work_dir, "Hustler.app")
+        executable = os.path.join(app_path, "Contents", "MacOS", "Hustler")
+        if not os.path.isfile(executable):
+            raise ValueError("The downloaded update does not contain a valid Hustler app.")
+        return app_path
+    except Exception:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise
+
+
+def schedule_update_install(staged_app, target_app):
+    """Replace this bundle after the current process exits, then relaunch it."""
+    if not staged_app.endswith(".app") or not target_app.endswith(".app"):
+        raise ValueError("The update installer received an invalid app path.")
+    if not os.path.isdir(staged_app) or not os.path.isdir(target_app):
+        raise OSError("The app bundle is no longer available for updating.")
+    if not os.access(os.path.dirname(target_app), os.W_OK):
+        raise PermissionError("Move Hustler to a folder you can modify, then try the update again.")
+
+    helper_path = os.path.join(os.path.dirname(staged_app), "install-update.sh")
+    helper = """#!/bin/sh
+set -eu
+pid="$1"
+staged="$2"
+target="$3"
+backup="${target}.previous"
+while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+rm -rf "$backup"
+if [ -d "$target" ]; then mv "$target" "$backup"; fi
+if ! ditto "$staged" "$target"; then
+  [ -d "$backup" ] && mv "$backup" "$target"
+  exit 1
+fi
+rm -rf "$backup"
+xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
+open -n "$target" || true
+rm -rf "$(dirname "$staged")"
+"""
+    with open(helper_path, "w") as helper_file:
+        helper_file.write(helper)
+    os.chmod(helper_path, 0o700)
+    subprocess.Popen(["/bin/sh", helper_path, str(os.getpid()), staged_app, target_app], start_new_session=True)
 
 
 def load_data():
@@ -1042,6 +1116,10 @@ class Hustler(rumps.App):
         self.data = load_data()
         self._quote_idx = 0
         self.update_info = None
+        self.update_in_progress = False
+        self._staged_update = None
+        self._update_error = None
+        self._update_install_timer = None
         self._ensure_onboarded()
         self._apply_recurring_on_startup()
         self._build_menu()
@@ -1062,17 +1140,69 @@ class Hustler(rumps.App):
             self._build_menu()
 
     def _open_update(self, _):
-        if self.update_info and self.update_info.get("url"):
+        if not self.update_info or not self.update_info.get("url"):
+            return
+        target_app = current_app_bundle()
+        if not target_app:
+            rumps.alert(
+                title="Update unavailable",
+                message="Run Hustler from its .app bundle to update automatically. For now, download the update from the release page.",
+                ok="Open Release Page",
+            )
             webbrowser.open(self.update_info["url"])
+            return
+        if self.update_in_progress:
+            return
+        response = rumps.alert(
+            title=f"Install Hustler v{self.update_info['version']}?",
+            message="Hustler will download the update, briefly quit, replace itself, and reopen automatically. Your local data will stay untouched.",
+            ok="Update Now",
+            cancel="Later",
+        )
+        if response != 1:
+            return
+        self.update_in_progress = True
+        self._staged_update = None
+        self._update_error = None
+        rumps.notification(title="Downloading update", subtitle=f"Hustler v{self.update_info['version']}", message="You can keep working while it downloads.", sound=False)
+        threading.Thread(target=self._download_update, args=(self.update_info["url"],), daemon=True).start()
+        self._update_install_timer = rumps.Timer(self._finish_update_download, 0.5)
+        self._update_install_timer.start()
+
+    def _download_update(self, asset_url):
+        try:
+            self._staged_update = stage_update(asset_url)
+        except Exception as error:
+            self._update_error = str(error)
+
+    def _finish_update_download(self, timer):
+        if self._update_error:
+            timer.stop()
+            self.update_in_progress = False
+            rumps.alert(title="Update failed", message=f"Hustler could not download the update. {self._update_error}")
+            return
+        if not self._staged_update:
+            return
+        timer.stop()
+        try:
+            schedule_update_install(self._staged_update, current_app_bundle())
+        except (OSError, ValueError, PermissionError) as error:
+            self.update_in_progress = False
+            rumps.alert(title="Update failed", message=str(error))
+            return
+        rumps.notification(title="Installing update", subtitle="Hustler will reopen in a moment.", message="", sound=False)
+        rumps.quit_application()
 
     def _show_release_notes(self, _):
         if self.update_info:
-            rumps.alert(
+            response = rumps.alert(
                 title=f"What’s new in v{self.update_info['version']}",
                 message=self.update_info.get("notes", "No release notes were provided."),
-                ok="View Download",
+                ok="Update Now",
+                cancel="Later",
             )
-            self._open_update(None)
+            if response == 1:
+                self._open_update(None)
 
     def _nudge_today(self):
         config = settings(self.data)

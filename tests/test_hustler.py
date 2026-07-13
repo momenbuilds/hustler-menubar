@@ -1,8 +1,11 @@
 import json
 import os
+import shutil
 import tempfile
 import unittest
+import zipfile
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 import hustler
@@ -86,6 +89,37 @@ class HustlerProductFlowTests(unittest.TestCase):
 
         self.assertEqual(latest["url"], "https://example.com/intel")
         self.assertEqual(latest["notes"], "Improved backups.")
+
+    def test_stage_update_unpacks_a_valid_hustler_app(self):
+        archive_path = os.path.join(self.temp_dir.name, "update.zip")
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("Hustler.app/Contents/MacOS/Hustler", "executable")
+
+        staged = hustler.stage_update(Path(archive_path).as_uri())
+
+        self.assertTrue(os.path.isfile(os.path.join(staged, "Contents", "MacOS", "Hustler")))
+        shutil.rmtree(os.path.dirname(staged), ignore_errors=True)
+
+    def test_stage_update_rejects_unsafe_zip_paths(self):
+        archive_path = os.path.join(self.temp_dir.name, "unsafe-update.zip")
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("../outside", "nope")
+
+        with self.assertRaises(ValueError):
+            hustler.stage_update(Path(archive_path).as_uri())
+
+    def test_schedule_update_install_hands_off_to_a_helper(self):
+        staged = os.path.join(self.temp_dir.name, "staged", "Hustler.app")
+        target = os.path.join(self.temp_dir.name, "target", "Hustler.app")
+        os.makedirs(staged)
+        os.makedirs(target)
+
+        with patch.object(hustler.subprocess, "Popen") as popen:
+            hustler.schedule_update_install(staged, target)
+
+        helper_path = os.path.join(os.path.dirname(staged), "install-update.sh")
+        self.assertTrue(os.path.isfile(helper_path))
+        popen.assert_called_once()
 
 
 if __name__ == "__main__":
