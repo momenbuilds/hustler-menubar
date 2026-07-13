@@ -31,7 +31,7 @@ Each goal keeps its own entries and progress. The menu bar always shows the acti
 
 ## Updates
 
-Hustler checks GitHub Releases once after launch. When a newer version is available, choose `Update Available` and then `Update Now`: Hustler downloads the correct Intel or Apple-silicon build, briefly quits, replaces itself, and reopens automatically. `What’s New` shows the release notes first.
+Hustler checks GitHub Releases once after launch. When a newer version is available, click `Update Available` once: Hustler downloads the correct Intel or Apple-silicon build, briefly quits, replaces itself, and reopens automatically. `What’s New` is optional if you want to read the release notes first.
 
 ## Privacy
 

@@ -1153,14 +1153,6 @@ class Hustler(rumps.App):
             return
         if self.update_in_progress:
             return
-        response = rumps.alert(
-            title=f"Install Hustler v{self.update_info['version']}?",
-            message="Hustler will download the update, briefly quit, replace itself, and reopen automatically. Your local data will stay untouched.",
-            ok="Update Now",
-            cancel="Later",
-        )
-        if response != 1:
-            return
         self.update_in_progress = True
         self._staged_update = None
         self._update_error = None
