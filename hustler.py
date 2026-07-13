@@ -5,6 +5,7 @@ import os
 import platform
 import csv
 import math
+import shutil
 import sys
 import webbrowser
 from urllib.error import URLError
@@ -27,6 +28,7 @@ ASSET_DIR = os.path.join(ASSET_ROOT, "assets")
 MENU_BAR_ICON_FILE = os.path.join(ASSET_DIR, "hustler_menubar_icon.png")
 APP_ICON_FILE = os.path.join(ASSET_DIR, "hustler_app_icon.png")
 EXPORT_DIR = os.environ.get("HUSTLER_EXPORT_DIR", os.path.expanduser("~/Downloads"))
+BACKUP_DIR = os.environ.get("HUSTLER_BACKUP_DIR", os.path.join(APP_DATA_DIR, "Backups"))
 
 EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Shopping", "Health", "Entertainment", "Other"]
 
@@ -168,7 +170,7 @@ def default_settings():
         "goals": [
             {
                 "id": "main",
-                "name": "Main Goal",
+                "name": "Freedom Fund",
                 "target": DEFAULT_GOAL,
                 "start_date": today.isoformat(),
                 "target_date": target_date.isoformat(),
@@ -200,7 +202,12 @@ def latest_release():
         (asset.get("browser_download_url") for asset in release.get("assets", []) if asset.get("name") == asset_name),
         release.get("html_url"),
     )
-    return {"version": tag.lstrip("v"), "url": asset_url or release.get("html_url")}
+    notes = " ".join(str(release.get("body") or "").strip().split())
+    return {
+        "version": tag.lstrip("v"),
+        "url": asset_url or release.get("html_url"),
+        "notes": notes[:500] or "No release notes were provided.",
+    }
 
 
 def load_data():
@@ -210,6 +217,7 @@ def load_data():
         "achievements": [],
         "milestones": [],
         "last_reset": None,
+        "last_backup_date": None,
         "daily_log": {},
         "budgets": {},
         "recurring": [],
@@ -246,8 +254,51 @@ def save_data(data):
     directory = os.path.dirname(DATA_FILE)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    with open(DATA_FILE, "w") as f:
+    _backup_current_data(data)
+    temporary_file = f"{DATA_FILE}.tmp"
+    with open(temporary_file, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(temporary_file, DATA_FILE)
+
+
+def backup_path(when=None):
+    when = when or datetime.now()
+    filename = f"hustler-backup-{when:%Y-%m-%d-%H%M%S-%f}.json"
+    return os.path.join(BACKUP_DIR, filename)
+
+
+def _backup_current_data(data):
+    """Keep one local snapshot per day before the first save of that day."""
+    today = date.today().isoformat()
+    if data.get("last_backup_date") == today or not os.path.exists(DATA_FILE):
+        return None
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    path = backup_path()
+    shutil.copy2(DATA_FILE, path)
+    data["last_backup_date"] = today
+    return path
+
+
+def create_backup():
+    if not os.path.exists(DATA_FILE):
+        raise OSError("There is no Hustler data file to back up yet.")
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    path = backup_path()
+    shutil.copy2(DATA_FILE, path)
+    return path
+
+
+def restore_backup(path):
+    with open(path, encoding="utf-8") as source:
+        restored = json.load(source)
+    if not isinstance(restored, dict) or "settings" not in restored:
+        raise ValueError("That file is not a Hustler backup.")
+    create_backup()
+    directory = os.path.dirname(DATA_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    shutil.copy2(path, DATA_FILE)
+    return load_data()
 
 
 def settings(data):
@@ -260,7 +311,7 @@ def normalize_goal_settings(config):
         goals = [
             {
                 "id": "main",
-                "name": "Main Goal",
+                "name": "Freedom Fund",
                 "target": config.get("goal", DEFAULT_GOAL),
                 "start_date": config.get("start_date", date.today().isoformat()),
                 "target_date": config.get("goal_date", (date.today() + timedelta(days=DEFAULT_GOAL_DAYS)).isoformat()),
@@ -591,11 +642,12 @@ def weekly_recap(data):
         f"Hustler weekly recap\n"
         f"{active_goal(data)['name']}: {pct_label(net_profit(data), data)} complete\n"
         f"Income: {fmt(revenue, data)} | Spending: {fmt(expenses, data)}\n"
-        f"Net: {fmt(revenue - expenses, data)} | Streak: {streak(data)} days"
+        f"Net: {fmt(revenue - expenses, data)} | Streak: {streak(data)} days\n"
+        f"Pace: {pace_status(data)['label']} | Next win: {next_milestone(data)['label']}"
     )
 
 
-def choose_csv_file():
+def choose_file(file_types):
     try:
         from AppKit import NSModalResponseOK, NSOpenPanel
 
@@ -603,10 +655,18 @@ def choose_csv_file():
         panel.setCanChooseFiles_(True)
         panel.setCanChooseDirectories_(False)
         panel.setAllowsMultipleSelection_(False)
-        panel.setAllowedFileTypes_(["csv"])
+        panel.setAllowedFileTypes_(file_types)
         return panel.URL().path() if panel.runModal() == NSModalResponseOK else None
     except Exception:
         return None
+
+
+def choose_csv_file():
+    return choose_file(["csv"])
+
+
+def choose_backup_file():
+    return choose_file(["json"])
 
 
 def copy_to_clipboard(text):
@@ -692,6 +752,27 @@ def recent_entries(data, limit=5):
             entries.append((entry.get("timestamp", ""), entry_type, idx, entry))
     entries.sort(key=lambda item: item[0], reverse=True)
     return entries[:limit]
+
+
+def last_entry(data):
+    entries = recent_entries(data, limit=1)
+    return entries[0] if entries else None
+
+
+def next_milestone(data):
+    total = max(net_profit(data), 0)
+    goal = goal_amount(data)
+    if goal <= 0:
+        return {"label": "Set a goal", "remaining": 0, "fraction": 0}
+    for fraction in MILESTONES:
+        target = goal * fraction
+        if total < target:
+            return {
+                "label": f"{int(fraction * 100)}% milestone",
+                "remaining": max(target - total, 0),
+                "fraction": fraction,
+            }
+    return {"label": "Goal complete", "remaining": 0, "fraction": 1.0}
 
 
 def entry_summary(entry_type, entry, data=None):
@@ -965,6 +1046,7 @@ class Hustler(rumps.App):
         self._apply_recurring_on_startup()
         self._build_menu()
         self._update_title()
+        self._nudge_today()
         rumps.timer(QUOTE_ROTATION_SECONDS)(self._cycle_title)
         self._update_timer = rumps.Timer(self._check_for_update, 3)
         self._update_timer.start()
@@ -983,12 +1065,36 @@ class Hustler(rumps.App):
         if self.update_info and self.update_info.get("url"):
             webbrowser.open(self.update_info["url"])
 
+    def _show_release_notes(self, _):
+        if self.update_info:
+            rumps.alert(
+                title=f"What’s new in v{self.update_info['version']}",
+                message=self.update_info.get("notes", "No release notes were provided."),
+                ok="View Download",
+            )
+            self._open_update(None)
+
+    def _nudge_today(self):
+        config = settings(self.data)
+        today = date.today().isoformat()
+        if config.get("last_nudge_date") == today or today_revenue(self.data) > 0:
+            return
+        next_win = next_milestone(self.data)
+        config["last_nudge_date"] = today
+        save_data(self.data)
+        rumps.notification(
+            title="Make today count",
+            subtitle="Log one win to keep your streak alive.",
+            message=f"{fmt(next_win['remaining'], self.data)} to your {next_win['label']}.",
+            sound=False,
+        )
+
     def _ensure_onboarded(self):
         if settings(self.data).get("onboarded"):
             return
         rumps.alert(
             title="Welcome to Hustler",
-            message="Set your target once. You can change it later from Settings.",
+            message="Name one meaningful goal, set a target, then log your first win. Everything stays on this Mac.",
             ok="Set Up",
         )
         self._edit_goal_settings(first_run=True)
@@ -1006,15 +1112,17 @@ class Hustler(rumps.App):
 
     def _edit_goal_settings(self, _=None, first_run=False):
         current = active_goal(self.data)
+        if first_run:
+            name = self._settings_input("Your First Goal", "Give this goal a name. Example: Freedom Fund.", current["name"])
+            if name is None:
+                return
+            current["name"] = name or "Freedom Fund"
         goal_text = self._settings_input(
             "Goal Settings",
             "What is your target amount?",
             str(int(goal_amount(self.data)) if goal_amount(self.data).is_integer() else goal_amount(self.data)),
         )
         if goal_text is None:
-            if first_run:
-                settings(self.data)["onboarded"] = True
-                save_data(self.data)
             return
 
         try:
@@ -1068,9 +1176,9 @@ class Hustler(rumps.App):
         self._update_title()
         self._build_menu()
         rumps.notification(
-            title="Goal settings saved",
+            title="Your goal is ready",
             subtitle=f"{fmt(goal, self.data)} by {configured_goal.isoformat()}",
-            message="",
+            message="Your next move: Quick Log your first win.",
             sound=False,
         )
 
@@ -1204,7 +1312,14 @@ class Hustler(rumps.App):
         save_data(self.data)
 
     def _quick_log(self, _):
-        response = self._settings_input("Quick Log", "Use +500 client work or -120 Food lunch.", "")
+        recent = last_entry(self.data)
+        example = "+500 client work or -20 Food lunch"
+        default = ""
+        if recent:
+            _, entry_type, _, entry = recent
+            sign = "+" if entry_type == "revenue" else "-"
+            default = f"{sign}{entry['amount']:g} {entry.get('description', '')}".strip()
+        response = self._settings_input("Quick Log", f"{example}. Edit the suggested last entry or type a new one.", default)
         if response is None:
             return
         try:
@@ -1213,6 +1328,18 @@ class Hustler(rumps.App):
             rumps.alert(title="Quick Log", message=str(error))
             return
         self._record_entry(entry_type, amount, description, category)
+
+    def _repeat_last_entry(self, _):
+        recent = last_entry(self.data)
+        if not recent:
+            rumps.alert(title="Repeat Last Entry", message="Log an entry first, then you can repeat it here.")
+            return
+        _, entry_type, _, entry = recent
+        self._record_entry(entry_type, entry["amount"], entry.get("description", "Quick log"), entry.get("category"))
+
+    def _quick_spend(self, sender):
+        amount = float(sender.title.replace("-", "").replace(currency(self.data), "").replace(",", ""))
+        self._record_entry("expenses", amount, "Quick spend", "Other")
 
     def _import_csv(self, _):
         path = choose_csv_file()
@@ -1232,6 +1359,39 @@ class Hustler(rumps.App):
         self._update_title()
         self._build_menu()
         rumps.notification(title="CSV imported", subtitle=f"{added} entries added", message="", sound=False)
+
+    def _create_backup(self, _):
+        try:
+            path = create_backup()
+        except OSError as error:
+            rumps.alert(title="Backup failed", message=str(error))
+            return
+        rumps.notification(
+            title="Backup saved",
+            subtitle="Your Hustler data has a local snapshot.",
+            message=path,
+            sound=False,
+        )
+
+    def _restore_backup(self, _):
+        path = choose_backup_file()
+        if path is None:
+            return
+        if rumps.alert(
+            title="Restore Backup?",
+            message="Your current data will be backed up first, then replaced by the selected backup.",
+            ok="Restore",
+            cancel="Cancel",
+        ) != 1:
+            return
+        try:
+            self.data = restore_backup(path)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            rumps.alert(title="Restore failed", message=str(error))
+            return
+        self._update_title()
+        self._build_menu()
+        rumps.notification(title="Backup restored", subtitle="Your Hustler data is ready.", message="", sound=False)
 
     def _monthly_review(self, _):
         rumps.alert(title=f"{date.today():%B} Review", message=monthly_review(self.data), ok="Done")
@@ -1353,16 +1513,20 @@ class Hustler(rumps.App):
         cats = expense_by_category(self.data)
         projection = forecast(self.data)
         budgets = budget_statuses(self.data)
+        next_win = next_milestone(self.data)
 
         self.menu.add(rumps.MenuItem(f"🎯 Hustler  |  {active_goal(self.data)['name']}"))
         if self.update_info:
             self.menu.add(rumps.MenuItem(f"⬇️ Update Available: v{self.update_info['version']}", callback=self._open_update))
+            self.menu.add(rumps.MenuItem("📝 What’s New", callback=self._show_release_notes))
         self.menu.add(rumps.separator)
 
         symbol = currency(self.data)
         self.menu.add(rumps.MenuItem(f"💵 Today: +{symbol}{today_rev:,.2f}  -{symbol}{today_exp:,.2f}"))
         self.menu.add(rumps.MenuItem(f"Progress:  {bar} {pct}"))
         self.menu.add(rumps.MenuItem(f"📈 Pace: {pace['label']}  •  {fmt(target, self.data)}/day"))
+        if next_win["remaining"]:
+            self.menu.add(rumps.MenuItem(f"✨ Next win: {fmt(next_win['remaining'], self.data)} to {next_win['label']}"))
         if projection["date"]:
             self.menu.add(rumps.MenuItem(f"🔮 Forecast: {projection['date']:%b %d, %Y}"))
         if budgets and budgets[0]["ratio"] >= 0.8:
@@ -1374,7 +1538,13 @@ class Hustler(rumps.App):
         for amount in [25, 50, 100, 250, 500]:
             quick_add.add(rumps.MenuItem(f"+{symbol}{amount}", callback=self._quick_add))
         self.menu.add(quick_add)
+        quick_spend = rumps.MenuItem("🛒 Quick Spend")
+        for amount in [10, 25, 50, 100]:
+            quick_spend.add(rumps.MenuItem(f"-{symbol}{amount}", callback=self._quick_spend))
+        self.menu.add(quick_spend)
         self.menu.add(rumps.MenuItem("✍️ Quick Log", callback=self._quick_log))
+        if last_entry(self.data):
+            self.menu.add(rumps.MenuItem("↻ Repeat Last Entry", callback=self._repeat_last_entry))
         self.menu.add(rumps.separator)
 
         self.menu.add(rumps.MenuItem("➕ Add Revenue", callback=self.add_revenue))
@@ -1428,6 +1598,9 @@ class Hustler(rumps.App):
         tools_menu.add(rumps.MenuItem("📥 Import CSV", callback=self._import_csv))
         tools_menu.add(rumps.MenuItem("📤 Export CSV", callback=self._export_csv))
         tools_menu.add(rumps.MenuItem("🖼 Export Image", callback=self._export_image))
+        tools_menu.add(rumps.separator)
+        tools_menu.add(rumps.MenuItem("💾 Back Up Data", callback=self._create_backup))
+        tools_menu.add(rumps.MenuItem("♻️ Restore Backup", callback=self._restore_backup))
         self.menu.add(tools_menu)
 
         settings_menu = rumps.MenuItem("⚙️ Settings")
@@ -1484,10 +1657,14 @@ class Hustler(rumps.App):
         net = net_profit(self.data)
         emoji = "💰" if entry_type == "revenue" else "🛒"
         sign = "+" if entry_type == "revenue" else "-"
+        next_win = next_milestone(self.data)
+        message = f"Net: {currency(self.data)}{net:,.2f}  •  {pct_label(net, self.data)} to goal"
+        if next_win["remaining"]:
+            message += f"  •  {fmt(next_win['remaining'], self.data)} to {next_win['label']}"
         rumps.notification(
             title=f"{emoji} {sign}{currency(self.data)}{entry['amount']:,.2f} added!",
             subtitle=entry.get("description", "No description"),
-            message=f"Net: {currency(self.data)}{net:,.2f}  •  {pct_label(net, self.data)} to goal",
+            message=message,
             sound=False,
         )
 

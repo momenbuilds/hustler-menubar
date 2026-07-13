@@ -15,27 +15,27 @@ On first launch, macOS may ask for confirmation because Hustler is not distribut
 
 ## First Launch
 
-Hustler asks for your target amount, currency, start date, and target date. That is it. Your first goal is ready immediately.
+Hustler helps you name a first goal, set the amount and deadline, then points you straight to your first Quick Log. A `Freedom Fund` example is ready to adapt—nothing is sent anywhere.
 
 ## Use It Daily
 
-- `Quick Log`: type `+500 client work` or `-120 Food lunch`.
-- `Quick Add`: add common revenue amounts.
+- `Quick Log`: type `+500 client work` or `-120 Food lunch`; it pre-fills your last entry so repeat logging is fast.
+- `Quick Add` and `Quick Spend`: add common amounts in one click, or use `Repeat Last Entry` for recurring work.
 - `Add Revenue` and `Add Expense`: log detailed entries.
 - `Insights`: see spending, budgets, streaks, milestones, and recent activity without making the main menu long.
 - `Manage Entries`: edit, delete, or undo recent entries.
 - `Settings`: switch goals, create another goal, set category budgets, and manage monthly recurring entries.
-- `Tools`: import CSV files, export your current goal, view monthly review, copy a weekly recap, or create a progress card.
+- `Tools`: import/export CSV, create a progress card, read a monthly review, copy a weekly recap, and create or restore local backups.
 
 Each goal keeps its own entries and progress. The menu bar always shows the active goal.
 
 ## Updates
 
-Hustler checks GitHub Releases once after launch. When a newer version is available, a small `Update Available` item appears at the top of the menu and opens the download.
+Hustler checks GitHub Releases once after launch. When a newer version is available, an `Update Available` item opens the correct Intel or Apple-silicon download, while `What’s New` shows the release notes first.
 
 ## Privacy
 
-Your data stays on your Mac in `~/Library/Application Support/Hustler/hustler_data.json`. Hustler has no accounts, analytics, or cloud sync.
+Your data stays on your Mac in `~/Library/Application Support/Hustler/hustler_data.json`. Hustler automatically keeps a daily pre-save snapshot in `~/Library/Application Support/Hustler/Backups`, and you can create or restore a backup any time. Hustler has no accounts, analytics, or cloud sync.
 
 The only network request is the one-time update check after launch. It only asks GitHub whether a newer public release exists.
 
